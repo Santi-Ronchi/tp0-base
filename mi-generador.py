@@ -19,7 +19,7 @@ with open(archivo, "w") as f:
     f.write("  server:\n")
     f.write("    container_name: server\n")
     f.write("    image: server:latest\n")
-    f.write("    command: python3 /main.py\n")
+    f.write("    entrypoint: python3 /main.py\n")
     f.write("    environment:\n")
     f.write("      - PYTHONUNBUFFERED=1\n")
     f.write("      - LOGGING_LEVEL=DEBUG\n")
