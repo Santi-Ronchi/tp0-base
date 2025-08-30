@@ -1,9 +1,10 @@
 package main
 
 import (
-	"fmt"
 	"os"
+	"os/signal"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/op/go-logging"
@@ -43,9 +44,7 @@ func InitConfig() (*viper.Viper, error) {
 	// can be loaded from the environment variables so we shouldn't
 	// return an error in that case
 	v.SetConfigFile("./config.yaml")
-	if err := v.ReadInConfig(); err != nil {
-		fmt.Printf("Configuration could not be read from config file. Using env variables instead")
-	}
+	_ = v.ReadInConfig()
 
 	// Parse time.Duration variables and return an error if those variables cannot be parsed
 
@@ -94,10 +93,12 @@ func main() {
 	v, err := InitConfig()
 	if err != nil {
 		log.Criticalf("%s", err)
+		os.Exit(1)
 	}
 
 	if err := InitLogger(v.GetString("log.level")); err != nil {
 		log.Criticalf("%s", err)
+		os.Exit(1)
 	}
 
 	// Print program config with debugging purposes
@@ -111,5 +112,16 @@ func main() {
 	}
 
 	client := common.NewClient(clientConfig)
+
+	// Manejo de SIGTERM para shutdown graceful
+	stopChan := make(chan os.Signal, 1)
+	signal.Notify(stopChan, syscall.SIGTERM)
+	go func() {
+		<-stopChan
+		log.Infof("action: exit | result: success | client_id: %v", clientConfig.ID)
+		client.Shutdown()
+		os.Exit(0)
+	}()
+
 	client.StartClientLoop()
 }

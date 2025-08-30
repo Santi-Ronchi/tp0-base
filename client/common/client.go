@@ -4,9 +4,6 @@ import (
 	"bufio"
 	"fmt"
 	"net"
-	"os"
-	"os/signal"
-	"syscall"
 	"time"
 
 	"github.com/op/go-logging"
@@ -24,49 +21,67 @@ type ClientConfig struct {
 
 // Client Entity that encapsulates how
 type Client struct {
-	config  ClientConfig
-	conn    net.Conn
-	running bool
+	config ClientConfig
+	conn   net.Conn
+	stop   chan struct{}
+}
+
+func (c *Client) Shutdown() {
+	if c.conn != nil {
+		c.conn.Close()
+		log.Infof("action: close_socket | result: success | client_id: %v", c.config.ID)
+	}
+	close(c.stop)
 }
 
 // NewClient Initializes a new client receiving the configuration
 // as a parameter
 func NewClient(config ClientConfig) *Client {
-	return &Client{config: config}
+	return &Client{
+		config: config,
+		stop:   make(chan struct{}),
+	}
 }
 
 // CreateClientSocket Initializes client socket. In case of
 // failure, error is printed in stdout/stderr and exit 1
 // is returned
 func (c *Client) createClientSocket() error {
-	conn, err := net.Dial("tcp", c.config.ServerAddress)
-	if err != nil {
-		log.Criticalf("action: connect | result: fail | client_id: %v | error: %v", c.config.ID, err)
-		return err
+	const maxRetries = 5
+	const retryDelay = 200 * time.Millisecond
+
+	var conn net.Conn
+	var err error
+
+	for attempt := 1; attempt <= maxRetries; attempt++ {
+		conn, err = net.Dial("tcp", c.config.ServerAddress)
+		if err == nil {
+			c.conn = conn
+			return nil
+		}
+		log.Warningf("action: connect | result: retry | client_id: %v | attempt: %v | error: %v",
+			c.config.ID, attempt, err)
+		time.Sleep(retryDelay)
 	}
-	c.conn = conn
-	return nil
+
+	log.Criticalf("action: connect | result: fail | client_id: %v | error: %v",
+		c.config.ID,
+		err,
+	)
+	return err
 }
 
 // StartClientLoop Send messages to the client until some time threshold is met
 func (c *Client) StartClientLoop() {
 	// There is an autoincremental msgID to identify every message sent
 	// Messages if the message amount threshold has not been surpassed
-	c.running = true
-	sigs := make(chan os.Signal, 1)
-	signal.Notify(sigs, syscall.SIGTERM)
-
-	go func() {
-		<-sigs
-		log.Infof("SIGTERM received, closing client gracefully")
-		c.running = false
-		if c.conn != nil {
-			c.conn.Close()
-			log.Infof("Client connection closed")
+	for msgID := 1; msgID <= c.config.LoopAmount; msgID++ {
+		select {
+		case <-c.stop:
+			return
+		default:
 		}
-	}()
 
-	for msgID := 1; msgID <= c.config.LoopAmount && c.running; msgID++ {
 		// Attempt to create the connection the server in every loop iteration.
 		if err := c.createClientSocket(); err != nil {
 			break
@@ -76,6 +91,7 @@ func (c *Client) StartClientLoop() {
 		fmt.Fprintf(c.conn, "[CLIENT %v] Message N°%v\n", c.config.ID, msgID)
 		msg, err := bufio.NewReader(c.conn).ReadString('\n')
 		c.conn.Close()
+		c.conn = nil
 
 		if err != nil {
 			log.Errorf("action: receive_message | result: fail | client_id: %v | error: %v",
