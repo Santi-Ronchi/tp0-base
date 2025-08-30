@@ -1,10 +1,15 @@
 #!/bin/sh
 
+TEST_MSG="[ECHO TEST] Hello"
+SERVER='server'
+PORT=12345
 
-DOCKER_NETWORK='tp0_testing_net'
-TEST_IMAGE='echo-tester:latest'
-TEST_SCRIPT='netcat-validar-echo-server.sh'
 
+# Enviar mensaje y capturar la respuesta con timeout
+RESPONSE=$(docker run --rm --network tp0_testing_net busybox:latest sh -c "echo '$TEST_MSG' | nc $SERVER $PORT")
 
-docker build -t "$TEST_IMAGE" ./netcat-validar-echo-server
-docker run --rm --network="$DOCKER_NETWORK" "$TEST_IMAGE" sh -c "./$TEST_SCRIPT"
+if [ "$RESPONSE" = "$TEST_MSG" ]; then
+    echo 'action: test_echo_server | result: success'
+else
+    echo 'action: test_echo_server | result: fail'
+fi
