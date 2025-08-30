@@ -25,6 +25,7 @@ with open(archivo, "w") as f:
     f.write("      - LOGGING_LEVEL=DEBUG\n")
     f.write("    networks:\n")
     f.write("      - testing_net\n")
+    f.write("    restart: on-failure\n")
 
     # Clientes
     for i in range(1, cantidad + 1):
