@@ -39,6 +39,7 @@ with open(archivo, "w") as f:
         f.write("      - testing_net\n")
         f.write("    depends_on:\n")
         f.write("      - server\n")
+        f.write("    restart: on-failure\n")
 
     # Redes
     f.write("\nnetworks:\n")
