@@ -47,28 +47,14 @@ func NewClient(config ClientConfig) *Client {
 // failure, error is printed in stdout/stderr and exit 1
 // is returned
 func (c *Client) createClientSocket() error {
-	const maxRetries = 5
-	const retryDelay = 200 * time.Millisecond
-
-	var conn net.Conn
-	var err error
-
-	for attempt := 1; attempt <= maxRetries; attempt++ {
-		conn, err = net.Dial("tcp", c.config.ServerAddress)
-		if err == nil {
-			c.conn = conn
-			return nil
-		}
-		log.Warningf("action: connect | result: retry | client_id: %v | attempt: %v | error: %v",
-			c.config.ID, attempt, err)
-		time.Sleep(retryDelay)
+	conn, err := net.Dial("tcp", c.config.ServerAddress)
+	if err != nil {
+		log.Criticalf("action: connect | result: fail | client_id: %v | error: %v",
+			c.config.ID, err)
+		return err
 	}
-
-	log.Criticalf("action: connect | result: fail | client_id: %v | error: %v",
-		c.config.ID,
-		err,
-	)
-	return err
+	c.conn = conn
+	return nil
 }
 
 // StartClientLoop Send messages to the client until some time threshold is met
@@ -84,7 +70,7 @@ func (c *Client) StartClientLoop() {
 
 		// Attempt to create the connection the server in every loop iteration.
 		if err := c.createClientSocket(); err != nil {
-			break
+			return
 		}
 
 		// TODO: Modify the send to avoid short-write
@@ -98,7 +84,7 @@ func (c *Client) StartClientLoop() {
 				c.config.ID,
 				err,
 			)
-			break
+			return
 		}
 
 		log.Infof("action: receive_message | result: success | client_id: %v | msg: %v",
