@@ -31,7 +31,7 @@ with open(archivo, "w") as f:
         f.write(f"\n  client{i}:\n")
         f.write(f"    container_name: client{i}\n")
         f.write("    image: client:latest\n")
-        f.write("    command: /client\n")
+        f.write("    entrypoint: /client\n")
         f.write("    environment:\n")
         f.write(f"      - CLI_ID={i}\n")
         f.write("      - CLI_LOG_LEVEL=DEBUG\n")
