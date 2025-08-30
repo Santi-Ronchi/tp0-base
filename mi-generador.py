@@ -25,6 +25,8 @@ with open(archivo, "w") as f:
     f.write("      - LOGGING_LEVEL=DEBUG\n")
     f.write("    networks:\n")
     f.write("      - testing_net\n")
+    f.write("    volumes:\n")
+    f.write("      - ./server/config.ini:/config.ini:ro\n")
 
     # Clientes
     for i in range(1, cantidad + 1):
@@ -40,6 +42,8 @@ with open(archivo, "w") as f:
         f.write("    depends_on:\n")
         f.write("      - server\n")
         f.write("    restart: on-failure\n")
+        f.write("    volumes:\n")
+        f.write("      - ./client/config.yaml:/config.yaml:ro\n")
 
     # Redes
     f.write("\nnetworks:\n")
