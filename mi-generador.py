@@ -12,6 +12,45 @@ except ValueError:
     print("La cantidad de clientes debe ser un número entero")
     sys.exit(1)
 
+# Datos de ejemplo para las 5 agencias
+agencias_data = [
+    {
+        "nombre": "Santiago Lionel",
+        "apellido": "Lorca", 
+        "documento": "30904465",
+        "nacimiento": "1999-03-17",
+        "numero": "7574"
+    },
+    {
+        "nombre": "María José",
+        "apellido": "González",
+        "documento": "32123456", 
+        "nacimiento": "1995-07-22",
+        "numero": "1234"
+    },
+    {
+        "nombre": "Carlos Alberto",
+        "apellido": "Pérez",
+        "documento": "28765432",
+        "nacimiento": "1992-11-30",
+        "numero": "5678"
+    },
+    {
+        "nombre": "Ana Laura",
+        "apellido": "Rodríguez",
+        "documento": "35098765",
+        "nacimiento": "2000-02-14",
+        "numero": "9012"
+    },
+    {
+        "nombre": "Luis Fernando",
+        "apellido": "Martínez",
+        "documento": "29876543",
+        "nacimiento": "1998-09-05",
+        "numero": "3456"
+    }
+]
+
 with open(archivo, "w") as f:
     # Cabecera
     f.write("name: tp0\n")
@@ -31,12 +70,18 @@ with open(archivo, "w") as f:
 
     # Clientes
     for i in range(1, cantidad + 1):
+
         f.write(f"\n  client{i}:\n")
         f.write(f"    container_name: client{i}\n")
         f.write("    image: client:latest\n")
         f.write("    entrypoint: /client\n")
         f.write("    environment:\n")
         f.write(f"      - CLI_ID={i}\n")
+        f.write(f"      - NOMBRE={agencias_data['nombre']}\n")
+        f.write(f"      - APELLIDO={agencias_data['apellido']}\n")
+        f.write(f"      - DOCUMENTO={agencias_data['documento']}\n")
+        f.write(f"      - NACIMIENTO={agencias_data['nacimiento']}\n")
+        f.write(f"      - NUMERO={agencias_data['numero']}\n")
         f.write(f"      - AGENCIA={i}\n")
         f.write("    networks:\n")
         f.write("      - testing_net\n")
