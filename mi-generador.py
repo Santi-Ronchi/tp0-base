@@ -27,6 +27,7 @@ with open(archivo, "w") as f:
     f.write("    restart: on-failure\n")
     f.write("    volumes:\n")
     f.write("      - ./server/config.ini:/config.ini:ro\n")
+    f.write("      - ./bets.csv:/bets.csv:rw\n") 
 
     # Clientes
     for i in range(1, cantidad + 1):
@@ -36,7 +37,7 @@ with open(archivo, "w") as f:
         f.write("    entrypoint: /client\n")
         f.write("    environment:\n")
         f.write(f"      - CLI_ID={i}\n")
-        f.write(f"      - AGENCIA=1\n")
+        f.write(f"      - AGENCIA={i}\n")
         f.write("    networks:\n")
         f.write("      - testing_net\n")
         f.write("    depends_on:\n")

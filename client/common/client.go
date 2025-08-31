@@ -3,10 +3,10 @@ package common
 import (
 	"bufio"
 	"encoding/json"
-	"fmt"
 	"net"
 	"os"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/op/go-logging"
@@ -69,6 +69,31 @@ func (c *Client) createClientSocket() error {
 	return nil
 }
 
+// sendCompleteMessage sends a message ensuring no short-write occurs
+func (c *Client) sendCompleteMessage(data []byte) error {
+	totalSent := 0
+	dataLen := len(data)
+
+	for totalSent < dataLen {
+		n, err := c.conn.Write(data[totalSent:])
+		if err != nil {
+			return err
+		}
+		totalSent += n
+	}
+	return nil
+}
+
+// readCompleteMessage reads until newline ensuring no short-read occurs
+func (c *Client) readCompleteMessage() (string, error) {
+	reader := bufio.NewReader(c.conn)
+	msg, err := reader.ReadString('\n')
+	if err != nil {
+		return "", err
+	}
+	return strings.TrimSpace(msg), nil
+}
+
 // StartClientLoop Send messages to the client until some time threshold is met
 func (c *Client) StartClientLoop() {
 
@@ -110,31 +135,53 @@ func (c *Client) StartClientLoop() {
 		default:
 		}
 
-		// Attempt to create the connection the server in every loop iteration.
+		// Create connection for each bet
 		if err := c.createClientSocket(); err != nil {
-			return
+			log.Errorf("action: connect | result: fail | client_id: %v | error: %v", c.config.ID, err)
+			time.Sleep(c.config.LoopPeriod)
+			continue
 		}
 
-		// TODO: Modify the send to avoid short-write
-		data, _ := json.Marshal(apuesta)
-		fmt.Fprintf(c.conn, "%s\n", string(data))
+		// Serialize bet to JSON
+		data, err := json.Marshal(apuesta)
+		if err != nil {
+			log.Errorf("action: serialize | result: fail | client_id: %v | error: %v", c.config.ID, err)
+			c.conn.Close()
+			c.conn = nil
+			continue
+		}
 
-		msg, err := bufio.NewReader(c.conn).ReadString('\n')
+		// Send complete message with newline
+		message := append(data, '\n')
+		if err := c.sendCompleteMessage(message); err != nil {
+			log.Errorf("action: send_bet | result: fail | client_id: %v | error: %v", c.config.ID, err)
+			c.conn.Close()
+			c.conn = nil
+			continue
+		}
+
+		// Read server response
+		response, err := c.readCompleteMessage()
+
+		// Close connection after this bet
 		c.conn.Close()
 		c.conn = nil
 
 		if err != nil {
-			log.Errorf("action: receive_message | result: fail | client_id: %v | error: %v",
-				c.config.ID,
-				err,
-			)
-			return
+			log.Errorf("action: receive_confirmation | result: fail | client_id: %v | error: %v",
+				c.config.ID, err)
+			continue
 		}
 
-		log.Infof("action: receive_message | result: success | client_id: %v | msg: %v",
-			c.config.ID,
-			msg,
-		)
+		// Check if server confirmed with OK
+		if response == "OK" {
+			// Log success as required by exercise
+			log.Infof("action: apuesta_enviada | result: success | dni: %v | numero: %v",
+				document, number)
+		} else {
+			log.Errorf("action: apuesta_enviada | result: fail | dni: %v | numero: %v | response: %v",
+				document, number, response)
+		}
 
 		// Wait a time between sending one message and the next one
 		time.Sleep(c.config.LoopPeriod)

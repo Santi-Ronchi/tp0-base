@@ -23,39 +23,56 @@ class Server:
 
     def run(self):
         """
-        Dummy Server loop
-
-        Server that accept a new connections and establishes a
-        communication with a client. After client with communucation
-        finishes, servers starts to accept new connections again
+        Server loop that accepts new connections and establishes
+        communication with clients (agencies). After client communication
+        finishes, server starts to accept new connections again
         """
         while self.running:
             try:
                 client_sock = self.__accept_new_connection()
-                self.__handle_client_connection(client_sock)
+                if client_sock:
+                    self.__handle_client_connection(client_sock)
             except OSError:
                 # Socket principal cerrado
-                break
+                if not self.running:
+                    break
+                else:
+                    logging.error("Unexpected OSError while accepting connections")
         logging.info("Server loop exited gracefully")
 
     def __handle_client_connection(self, client_sock):
         """
         Read message from a specific client socket and closes the socket
-
         If a problem arises in the communication with the client, the
         client socket will also be closed
         """
         try:
+            # Read complete message until newline (avoid short-read)
             data = b""
-            while not data.endswith(b"\n"):
+            while True:
                 chunk = client_sock.recv(1024)
                 if not chunk:
+                    if not data:
+                        logging.warning("Client disconnected without sending data")
+                        return
                     break
                 data += chunk
-
-            msg = data.decode("utf-8").strip()
+                if b"\n" in data:
+                    # Found complete message
+                    break
+            
+             # Process only the first message (up to newline)
+            messages = data.split(b"\n")
+            if not messages[0]:
+                logging.warning("Empty message received")
+                return
+                
+            msg = messages[0].decode("utf-8").strip()
+            
+            # Parse JSON bet data
             bet_json = json.loads(msg)
-
+            
+            # Create Bet object
             bet = Bet(
                 agency=bet_json["agency"],
                 first_name=bet_json["first_name"],
@@ -69,26 +86,43 @@ class Server:
             store_bets([bet])
 
             # Confirmación
-            client_sock.sendall(b"OK\n")
+            confirmation = b"OK\n"
+            total_sent = 0
+            while total_sent < len(confirmation):
+                sent = client_sock.send(confirmation[total_sent:])
+                if sent == 0:
+                    raise RuntimeError("Socket connection broken")
+                total_sent += sent
 
             logging.info(f"action: apuesta_almacenada | result: success | dni: {bet.document} | numero: {bet.number}")
 
+        except json.JSONDecodeError as e:
+            logging.error(f"action: apuesta_almacenada | result: fail | error: Invalid JSON - {e}")
+        except KeyError as e:
+            logging.error(f"action: apuesta_almacenada | result: fail | error: Missing field - {e}")
+        except ValueError as e:
+            logging.error(f"action: apuesta_almacenada | result: fail | error: Invalid value - {e}")
         except Exception as e:
             logging.error(f"action: apuesta_almacenada | result: fail | error: {e}")
         finally:
             client_sock.close()
-            logging.info("Client socket closed")
+            logging.debug("Client socket closed")
 
     def __accept_new_connection(self):
         """
         Accept new connections
-
         Function blocks until a connection to a client is made.
         Then connection created is printed and returned
         """
 
-        # Connection arrived
-        logging.info('action: accept_connections | result: in_progress')
-        c, addr = self._server_socket.accept()
-        logging.info(f'action: accept_connections | result: success | ip: {addr[0]}')
-        return c
+        try:
+            # Connection arrived
+            logging.info('action: accept_connections | result: in_progress')
+            c, addr = self._server_socket.accept()
+            logging.info(f'action: accept_connections | result: success | ip: {addr[0]}')
+            return c
+        except OSError:
+            if not self.running:
+                # Expected when shutting down
+                return None
+            raise
