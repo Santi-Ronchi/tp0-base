@@ -74,6 +74,7 @@ func (c *Client) StartClientLoop() {
 
 	agencyStr := os.Getenv("AGENCIA")
 	numberStr := os.Getenv("NUMERO")
+	document := os.Getenv("DOCUMENTO")
 
 	agency, err := strconv.Atoi(agencyStr)
 	if err != nil {
@@ -86,11 +87,16 @@ func (c *Client) StartClientLoop() {
 		return
 	}
 
+	if document == "" {
+		log.Criticalf("action: config | result: fail | field: DOCUMENTO | error: empty value")
+		return
+	}
+
 	apuesta := Apuesta{
 		Agency:    agency,
 		FirstName: os.Getenv("NOMBRE"),
 		LastName:  os.Getenv("APELLIDO"),
-		Document:  os.Getenv("DOCUMENTO"),
+		Document:  document,
 		Birthdate: os.Getenv("NACIMIENTO"),
 		Number:    number,
 	}
