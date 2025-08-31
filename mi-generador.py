@@ -8,6 +8,9 @@ if len(sys.argv) != 3:
 archivo = sys.argv[1]
 try:
     cantidad = int(sys.argv[2])
+    if cantidad > 5:
+        print("La cantidad máxima de clientes es 5")
+        sys.exit(1)
 except ValueError:
     print("La cantidad de clientes debe ser un número entero")
     sys.exit(1)
@@ -68,7 +71,10 @@ with open(archivo, "w") as f:
     f.write("      - ./bets.csv:/bets.csv:rw\n") 
 
     # Clientes
-    for i in range(1, 6):
+    for i in range(1, cantidad + 1):
+        #Usamos datos de las agencias ciclicamente
+        agencia_idx = (i - 1) % 5
+        agencia_data = agencias_data[agencia_idx]
         f.write(f"\n  client{i}:\n")
         f.write(f"    container_name: client{i}\n")
         f.write("    image: client:latest\n")
