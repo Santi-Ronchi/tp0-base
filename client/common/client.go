@@ -2,8 +2,11 @@ package common
 
 import (
 	"bufio"
+	"encoding/json"
 	"fmt"
 	"net"
+	"os"
+	"strconv"
 	"time"
 
 	"github.com/op/go-logging"
@@ -24,6 +27,15 @@ type Client struct {
 	config ClientConfig
 	conn   net.Conn
 	stop   chan struct{}
+}
+
+type Apuesta struct {
+	Agency    int    `json:"agency"`
+	FirstName string `json:"first_name"`
+	LastName  string `json:"last_name"`
+	Document  string `json:"document"`
+	Birthdate string `json:"birthdate"`
+	Number    int    `json:"number"`
 }
 
 func (c *Client) Shutdown() {
@@ -59,6 +71,30 @@ func (c *Client) createClientSocket() error {
 
 // StartClientLoop Send messages to the client until some time threshold is met
 func (c *Client) StartClientLoop() {
+
+	agencyStr := os.Getenv("AGENCIA")
+	numberStr := os.Getenv("NUMERO")
+
+	agency, err := strconv.Atoi(agencyStr)
+	if err != nil {
+		log.Criticalf("action: config | result: fail | field: AGENCIA | error: %v", err)
+		return
+	}
+	number, err := strconv.Atoi(numberStr)
+	if err != nil {
+		log.Criticalf("action: config | result: fail | field: NUMERO | error: %v", err)
+		return
+	}
+
+	apuesta := Apuesta{
+		Agency:    agency,
+		FirstName: os.Getenv("NOMBRE"),
+		LastName:  os.Getenv("APELLIDO"),
+		Document:  os.Getenv("DOCUMENTO"),
+		Birthdate: os.Getenv("NACIMIENTO"),
+		Number:    number,
+	}
+
 	// There is an autoincremental msgID to identify every message sent
 	// Messages if the message amount threshold has not been surpassed
 	for msgID := 1; msgID <= c.config.LoopAmount; msgID++ {
@@ -74,7 +110,9 @@ func (c *Client) StartClientLoop() {
 		}
 
 		// TODO: Modify the send to avoid short-write
-		fmt.Fprintf(c.conn, "[CLIENT %v] Message N°%v\n", c.config.ID, msgID)
+		data, _ := json.Marshal(apuesta)
+		fmt.Fprintf(c.conn, "%s\n", string(data))
+
 		msg, err := bufio.NewReader(c.conn).ReadString('\n')
 		c.conn.Close()
 		c.conn = nil

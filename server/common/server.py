@@ -1,6 +1,8 @@
 import socket
 import logging
 import signal
+import json
+from utils import *
 
 
 class Server:
@@ -44,14 +46,35 @@ class Server:
         client socket will also be closed
         """
         try:
-            # TODO: Modify the receive to avoid short-reads
-            msg = client_sock.recv(1024).rstrip().decode('utf-8')
-            addr = client_sock.getpeername()
-            logging.info(f'action: receive_message | result: success | ip: {addr[0]} | msg: {msg}')
-            # TODO: Modify the send to avoid short-writes
-            client_sock.send("{}\n".format(msg).encode('utf-8'))
-        except OSError as e:
-            logging.error("action: receive_message | result: fail | error: {e}")
+            data = b""
+            while not data.endswith(b"\n"):
+                chunk = client_sock.recv(1024)
+                if not chunk:
+                    break
+                data += chunk
+
+            msg = data.decode("utf-8").strip()
+            bet_json = json.loads(msg)
+
+            bet = Bet(
+                agency=bet_json["agency"],
+                first_name=bet_json["first_name"],
+                last_name=bet_json["last_name"],
+                document=bet_json["document"],
+                birthdate=bet_json["birthdate"],
+                number=bet_json["number"]
+            )
+
+            # Guardar la apuesta
+            store_bets([bet])
+
+            # Confirmación
+            client_sock.sendall(b"OK\n")
+
+            logging.info(f"action: apuesta_almacenada | result: success | dni: {bet.document} | numero: {bet.number}")
+
+        except Exception as e:
+            logging.error(f"action: apuesta_almacenada | result: fail | error: {e}")
         finally:
             client_sock.close()
             logging.info("Client socket closed")
