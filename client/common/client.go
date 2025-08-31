@@ -106,14 +106,15 @@ func (c *Client) StartClientLoop() {
 		log.Criticalf("action: config | result: fail | field: AGENCIA | error: %v", err)
 		return
 	}
-	number, err := strconv.Atoi(numberStr)
-	if err != nil {
-		log.Criticalf("action: config | result: fail | field: NUMERO | error: %v", err)
-		return
-	}
 
 	if document == "" {
 		log.Criticalf("action: config | result: fail | field: DOCUMENTO | error: empty value")
+		return
+	}
+
+	number, err := strconv.Atoi(numberStr)
+	if err != nil {
+		log.Criticalf("action: config | result: fail | field: NUMERO | error: %v", err)
 		return
 	}
 
