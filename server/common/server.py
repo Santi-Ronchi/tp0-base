@@ -2,7 +2,7 @@ import socket
 import logging
 import signal
 import json
-from utils import *
+from common.utils import *
 
 
 class Server:
