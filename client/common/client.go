@@ -58,15 +58,20 @@ func NewClient(config ClientConfig) *Client {
 // CreateClientSocket Initializes client socket. In case of
 // failure, error is printed in stdout/stderr and exit 1
 // is returned
-func (c *Client) createClientSocket() error {
-	conn, err := net.Dial("tcp", c.config.ServerAddress)
-	if err != nil {
-		log.Criticalf("action: connect | result: fail | client_id: %v | error: %v",
-			c.config.ID, err)
-		return err
+func (c *Client) createClientSocket(maxRetries int, delay time.Duration) error {
+	var err error
+	for i := 0; i < maxRetries; i++ {
+		conn, dialErr := net.Dial("tcp", c.config.ServerAddress)
+		if dialErr == nil {
+			c.conn = conn
+			return nil
+		}
+		err = dialErr
+		log.Errorf("action: connect | result: fail | client_id: %v | attempt: %d/%d | error: %v",
+			c.config.ID, i+1, maxRetries, err)
+		time.Sleep(delay)
 	}
-	c.conn = conn
-	return nil
+	return err
 }
 
 // sendCompleteMessage sends a message ensuring no short-write occurs
@@ -107,11 +112,6 @@ func (c *Client) StartClientLoop() {
 		return
 	}
 
-	if document == "" {
-		log.Criticalf("action: config | result: fail | field: DOCUMENTO | error: empty value")
-		return
-	}
-
 	number, err := strconv.Atoi(numberStr)
 	if err != nil {
 		log.Criticalf("action: config | result: fail | field: NUMERO | error: %v", err)
@@ -137,7 +137,7 @@ func (c *Client) StartClientLoop() {
 		}
 
 		// Create connection for each bet
-		if err := c.createClientSocket(); err != nil {
+		if err := c.createClientSocket(3, time.Second); err != nil {
 			log.Errorf("action: connect | result: fail | client_id: %v | error: %v", c.config.ID, err)
 			time.Sleep(c.config.LoopPeriod)
 			continue
