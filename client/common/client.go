@@ -65,7 +65,7 @@ func (c *Client) createClientSocket(maxRetries int, delay time.Duration) error {
 		if err == nil {
 			return nil
 		}
-		log.Warningf("action: connect | result: retrying | client_id: %v | attempt: %d | error: %v",
+		log.Warningf("action: connect | result: retry | client_id: %v | attempt: %d | error: %v",
 			c.config.ID, attempt, err)
 		time.Sleep(delay)
 	}
