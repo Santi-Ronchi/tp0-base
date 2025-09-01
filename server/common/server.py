@@ -93,15 +93,9 @@ class Server:
                 if sent == 0:
                     raise RuntimeError("Socket connection broken")
                 total_sent += sent
-
-            logging.info(f"action: apuesta_almacenada | result: success | dni: {bet.document} | numero: {bet.number}")
-
-        except json.JSONDecodeError as e:
-            logging.error(f"action: apuesta_almacenada | result: fail | error: Invalid JSON - {e}")
-        except KeyError as e:
-            logging.error(f"action: apuesta_almacenada | result: fail | error: Missing field - {e}")
-        except ValueError as e:
-            logging.error(f"action: apuesta_almacenada | result: fail | error: Invalid value - {e}")
+                client_sock.sendall(b"OK\n")
+                logging.info(f"action: apuesta_almacenada | result: success | dni: {bet.document} | numero: {bet.number}")
+        
         except Exception as e:
             logging.error(f"action: apuesta_almacenada | result: fail | error: {e}")
         finally:

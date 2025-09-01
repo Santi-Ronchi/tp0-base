@@ -111,15 +111,15 @@ func (c *Client) readCompleteMessage() (string, error) {
 // StartClientLoop Send messages to the client until some time threshold is met
 func (c *Client) StartClientLoop() {
 
-	// Create connection once
 	if err := c.createClientSocket(3, time.Second); err != nil {
 		log.Errorf("action: connect | result: fail | client_id: %v | error: %v", c.config.ID, err)
 		return
 	}
 	defer func() {
-		c.conn.Close()
-		c.conn = nil
-		log.Infof("action: close_socket | result: success | client_id: %v", c.config.ID)
+		if c.conn != nil {
+			c.conn.Close()
+			log.Infof("action: close_socket | result: success | client_id: %v", c.config.ID)
+		}
 	}()
 
 	agencyStr := os.Getenv("AGENCIA")
@@ -147,33 +147,46 @@ func (c *Client) StartClientLoop() {
 		Number:    number,
 	}
 
-	// Serialize bet to JSON
-	data, err := json.Marshal(apuesta)
-	if err != nil {
-		log.Errorf("action: serialize | result: fail | client_id: %v | error: %v", c.config.ID, err)
-		return
-	}
+	// There is an autoincremental msgID to identify every message sent
+	// Messages if the message amount threshold has not been surpassed
+	for msgID := 1; msgID <= c.config.LoopAmount; msgID++ {
+		select {
+		case <-c.stop:
+			return
+		default:
+		}
 
-	// Send complete message with newline
-	message := append(data, '\n')
-	if err := c.sendCompleteMessage(message); err != nil {
-		log.Errorf("action: send_bet | result: fail | client_id: %v | error: %v", c.config.ID, err)
-		return
-	}
+		// Serialize bet to JSON
+		data, err := json.Marshal(apuesta)
+		if err != nil {
+			log.Errorf("action: serialize | result: fail | client_id: %v | error: %v", c.config.ID, err)
+			continue
+		}
 
-	// Read server response
-	response, err := c.readCompleteMessage()
-	if err != nil {
-		log.Errorf("action: receive_confirmation | result: fail | client_id: %v | error: %v",
-			c.config.ID, err)
-		return
-	}
+		// Send complete message with newline
+		message := append(data, '\n')
+		if err := c.sendCompleteMessage(message); err != nil {
+			log.Errorf("action: send_bet | result: fail | client_id: %v | error: %v", c.config.ID, err)
+			return // si falla enviar → abortar
+		}
 
-	if response == "OK" {
-		log.Infof("action: apuesta_enviada | result: success | dni: %v | numero: %v",
-			document, number)
-	} else {
-		log.Errorf("action: apuesta_enviada | result: fail | dni: %v | numero: %v | response: %v",
-			document, number, response)
+		// Read server response
+		response, err := c.readCompleteMessage()
+		if err != nil {
+			log.Errorf("action: receive_confirmation | result: fail | client_id: %v | error: %v", c.config.ID, err)
+			return
+		}
+
+		// Check if server confirmed with OK
+		if response == "OK" {
+			// Log success as required by exercise
+			log.Infof("action: apuesta_enviada | result: success | dni: %v | numero: %v", document, number)
+		} else {
+			log.Errorf("action: apuesta_enviada | result: fail | dni: %v | numero: %v | response: %v", document, number, response)
+		}
+
+		// Wait the configured period before sending a new bet
+		time.Sleep(c.config.LoopPeriod)
 	}
+	log.Infof("action: loop_finished | result: success | client_id: %v", c.config.ID)
 }
