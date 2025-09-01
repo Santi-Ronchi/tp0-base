@@ -1,8 +1,12 @@
 import socket
 import logging
 import signal
-import json
-from common.utils import *
+from common.utils import Bet, store_bets
+from common.protocol import (
+    deserialize_bet,
+    read_message_from_socket,
+    send_message_to_socket
+)
 
 
 class Server:
@@ -47,57 +51,37 @@ class Server:
         client socket will also be closed
         """
         try:
-            # Read complete message until newline (avoid short-read)
-            data = b""
-            while True:
-                chunk = client_sock.recv(1024)
-                if not chunk:
-                    if not data:
-                        logging.warning("Client disconnected without sending data")
-                        return
-                    break
-                data += chunk
-                if b"\n" in data:
-                    # Found complete message
-                    break
+            # Read complete message using protocol module
+            msg = read_message_from_socket(client_sock)
             
-             # Process only the first message (up to newline)
-            messages = data.split(b"\n")
-            if not messages[0]:
-                logging.warning("Empty message received")
-                return
-                
-            msg = messages[0].decode("utf-8").strip()
-            
-            # Parse JSON bet data
-            bet_json = json.loads(msg)
+            # Parse message using protocol module
+            bet_data = deserialize_bet(msg)
             
             # Create Bet object
             bet = Bet(
-                agency=bet_json["agency"],
-                first_name=bet_json["first_name"],
-                last_name=bet_json["last_name"],
-                document=bet_json["document"],
-                birthdate=bet_json["birthdate"],
-                number=bet_json["number"]
+                agency=bet_data["agency"],
+                first_name=bet_data["first_name"],
+                last_name=bet_data["last_name"],
+                document=bet_data["document"],
+                birthdate=bet_data["birthdate"],
+                number=bet_data["number"]
             )
 
-            # Guardar la apuesta
+            # Store the bet
             store_bets([bet])
 
-            # Confirmación
-            confirmation = b"OK\n"
-            total_sent = 0
-            while total_sent < len(confirmation):
-                sent = client_sock.send(confirmation[total_sent:])
-                if sent == 0:
-                    raise RuntimeError("Socket connection broken")
-                total_sent += sent
-                client_sock.sendall(b"OK\n")
-                logging.info(f"action: apuesta_almacenada | result: success | dni: {bet.document} | numero: {bet.number}")
+            # Send confirmation using protocol module
+            send_message_to_socket(client_sock, "OK")
+            
+            logging.info(f"action: apuesta_almacenada | result: success | dni: {bet.document} | numero: {bet.number}")
         
         except Exception as e:
             logging.error(f"action: apuesta_almacenada | result: fail | error: {e}")
+            try:
+                # Try to send error response
+                send_message_to_socket(client_sock, "ERROR")
+            except:
+                pass  # Ignore errors when sending error response
         finally:
             client_sock.close()
             logging.debug("Client socket closed")
@@ -108,7 +92,6 @@ class Server:
         Function blocks until a connection to a client is made.
         Then connection created is printed and returned
         """
-
         try:
             # Connection arrived
             logging.info('action: accept_connections | result: in_progress')

@@ -1,12 +1,9 @@
 package common
 
 import (
-	"bufio"
-	"encoding/json"
 	"net"
 	"os"
 	"strconv"
-	"strings"
 	"time"
 
 	"github.com/op/go-logging"
@@ -30,12 +27,12 @@ type Client struct {
 }
 
 type Apuesta struct {
-	Agency    int    `json:"agency"`
-	FirstName string `json:"first_name"`
-	LastName  string `json:"last_name"`
-	Document  string `json:"document"`
-	Birthdate string `json:"birthdate"`
-	Number    int    `json:"number"`
+	Agency    int
+	FirstName string
+	LastName  string
+	Document  string
+	Birthdate string
+	Number    int
 }
 
 func (c *Client) Shutdown() {
@@ -65,8 +62,6 @@ func (c *Client) createClientSocket(maxRetries int, delay time.Duration) error {
 		if err == nil {
 			return nil
 		}
-		//log.Warningf("action: connect | result: retry | client_id: %v | attempt: %d | error: %v",
-		//	c.config.ID, attempt, err)
 		time.Sleep(delay)
 	}
 	return err
@@ -83,13 +78,18 @@ func (c *Client) attemptConnection() error {
 	return nil
 }
 
-// sendCompleteMessage sends a message ensuring no short-write occurs
-func (c *Client) sendCompleteMessage(data []byte) error {
-	totalSent := 0
-	dataLen := len(data)
+// sendMessage sends a message with length prefix to handle message boundaries
+func (c *Client) sendMessage(data []byte) error {
+	// Create length-prefixed message using protocol module
+	msg, err := CreateMessage(data)
+	if err != nil {
+		return err
+	}
 
-	for totalSent < dataLen {
-		n, err := c.conn.Write(data[totalSent:])
+	// Send complete message
+	totalSent := 0
+	for totalSent < len(msg) {
+		n, err := c.conn.Write(msg[totalSent:])
 		if err != nil {
 			return err
 		}
@@ -98,14 +98,37 @@ func (c *Client) sendCompleteMessage(data []byte) error {
 	return nil
 }
 
-// readCompleteMessage reads until newline ensuring no short-read occurs
-func (c *Client) readCompleteMessage() (string, error) {
-	reader := bufio.NewReader(c.conn)
-	msg, err := reader.ReadString('\n')
+// readMessage reads a message with length prefix
+func (c *Client) readMessage() (string, error) {
+	// Read 4-byte length prefix
+	lengthBuf := make([]byte, 4)
+	totalRead := 0
+	for totalRead < 4 {
+		n, err := c.conn.Read(lengthBuf[totalRead:])
+		if err != nil {
+			return "", err
+		}
+		totalRead += n
+	}
+
+	// Parse message length using protocol module
+	msgLen, err := ReadMessageLength(lengthBuf)
 	if err != nil {
 		return "", err
 	}
-	return strings.TrimSpace(msg), nil
+
+	// Read the message body
+	msgBuf := make([]byte, msgLen)
+	totalRead = 0
+	for totalRead < int(msgLen) {
+		n, err := c.conn.Read(msgBuf[totalRead:])
+		if err != nil {
+			return "", err
+		}
+		totalRead += n
+	}
+
+	return string(msgBuf), nil
 }
 
 // StartClientLoop Send messages to the client until some time threshold is met
@@ -147,8 +170,7 @@ func (c *Client) StartClientLoop() {
 		Number:    number,
 	}
 
-	// There is an autoincremental msgID to identify every message sent
-	// Messages if the message amount threshold has not been surpassed
+	// Messages loop
 	for msgID := 1; msgID <= c.config.LoopAmount; msgID++ {
 		select {
 		case <-c.stop:
@@ -156,22 +178,17 @@ func (c *Client) StartClientLoop() {
 		default:
 		}
 
-		// Serialize bet to JSON
-		data, err := json.Marshal(apuesta)
-		if err != nil {
-			log.Errorf("action: serialize | result: fail | client_id: %v | error: %v", c.config.ID, err)
-			continue
-		}
+		// Serialize bet using custom protocol from protocol.go
+		data := SerializeApuesta(apuesta)
 
-		// Send complete message with newline
-		message := append(data, '\n')
-		if err := c.sendCompleteMessage(message); err != nil {
+		// Send message using length-prefixed protocol
+		if err := c.sendMessage(data); err != nil {
 			log.Errorf("action: send_bet | result: fail | client_id: %v | error: %v", c.config.ID, err)
-			return // si falla enviar → abortar
+			return
 		}
 
 		// Read server response
-		response, err := c.readCompleteMessage()
+		response, err := c.readMessage()
 		if err != nil {
 			log.Errorf("action: receive_confirmation | result: fail | client_id: %v | error: %v", c.config.ID, err)
 			return
@@ -179,7 +196,6 @@ func (c *Client) StartClientLoop() {
 
 		// Check if server confirmed with OK
 		if response == "OK" {
-			// Log success as required by exercise
 			log.Infof("action: apuesta_enviada | result: success | dni: %v | numero: %v", document, number)
 		} else {
 			log.Errorf("action: apuesta_enviada | result: fail | dni: %v | numero: %v | response: %v", document, number, response)
