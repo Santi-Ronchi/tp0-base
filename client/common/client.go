@@ -58,14 +58,28 @@ func NewClient(config ClientConfig) *Client {
 // CreateClientSocket Initializes client socket. In case of
 // failure, error is printed in stdout/stderr and exit 1
 // is returned
-func (c *Client) createClientSocket() error {
+func (c *Client) createClientSocket(maxRetries int, delay time.Duration) error {
+	var err error
+	for attempt := 1; attempt <= maxRetries; attempt++ {
+		err = c.attemptConnection()
+		if err == nil {
+			return nil
+		}
+		log.Warningf("action: connect | result: retrying | client_id: %v | attempt: %d | error: %v",
+			c.config.ID, attempt, err)
+		time.Sleep(delay)
+	}
+	return err
+}
+
+func (c *Client) attemptConnection() error {
 	conn, err := net.Dial("tcp", c.config.ServerAddress)
 	if err != nil {
-		log.Criticalf("action: connect | result: fail | client_id: %v | error: %v",
-			c.config.ID, err)
 		return err
 	}
 	c.conn = conn
+	log.Infof("action: connect | result: success | client_id: %v | server_address: %v",
+		c.config.ID, c.config.ServerAddress)
 	return nil
 }
 
@@ -132,7 +146,7 @@ func (c *Client) StartClientLoop() {
 		}
 
 		// Create connection for each bet
-		if err := c.createClientSocket(); err != nil {
+		if err := c.createClientSocket(3, time.Second); err != nil {
 			log.Errorf("action: connect | result: fail | client_id: %v | error: %v", c.config.ID, err)
 			time.Sleep(c.config.LoopPeriod)
 			continue
