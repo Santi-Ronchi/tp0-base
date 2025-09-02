@@ -4,7 +4,7 @@ from configparser import ConfigParser
 from common.server import Server
 import logging
 import os
-
+import sys
 
 def initialize_config():
     """ Parse env variables or config file to find program config params
@@ -46,10 +46,15 @@ def main():
     # of the component
     logging.debug(f"action: config | result: success | port: {port} | "
                   f"listen_backlog: {listen_backlog} | logging_level: {logging_level}")
+    
+    # Flush logs immediately
+    sys.stdout.flush()
+    sys.stderr.flush()
 
     # Initialize server and start server loop
     server = Server(port, listen_backlog)
     server.run()
+
 
 def initialize_log(logging_level):
     """
@@ -58,11 +63,20 @@ def initialize_log(logging_level):
     Current timestamp is added to be able to identify in docker
     compose logs the date when the log has arrived
     """
+    # Create a custom handler that flushes immediately
+    handler = logging.StreamHandler(sys.stdout)
+    handler.flush = sys.stdout.flush
+    
     logging.basicConfig(
         format='%(asctime)s %(levelname)-8s %(message)s',
         level=logging_level,
         datefmt='%Y-%m-%d %H:%M:%S',
+        handlers=[handler],
+        force=True
     )
+    
+    # Ensure immediate output
+    logging.getLogger().handlers[0].flush = lambda: sys.stdout.flush()
 
 
 if __name__ == "__main__":

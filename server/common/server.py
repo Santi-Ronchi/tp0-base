@@ -41,6 +41,12 @@ class Server:
                     break
                 else:
                     logging.error("Unexpected OSError while accepting connections")
+            except Exception as e:
+                logging.error(f"Unexpected error in server loop: {e}")
+                if self.running:
+                    continue
+                else:
+                    break
         
         logging.info("Server loop exited gracefully")
 
@@ -59,10 +65,9 @@ class Server:
                     # Parse batch message using protocol module
                     bets_data = deserialize_batch(msg)
                     
-                    # Si el batch está vacío, responder OK pero no procesar
+                    # Si el batch está vacío, continuar esperando
                     if len(bets_data) == 0:
-                        send_message_to_socket(client_sock, "OK")
-                        logging.info(f"action: apuesta_recibida | result: success | cantidad: 0")
+                        # En realidad no deberíamos recibir batches vacíos, pero si ocurre:
                         continue
                     
                     # Create Bet objects
@@ -81,28 +86,31 @@ class Server:
                     # Store all bets in the batch
                     store_bets(bets)
                     
+                    # Log success with batch size - CRÍTICO para los tests
+                    # Usar print directamente para asegurar salida inmediata
+                    import sys
+                    from datetime import datetime
+                    timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+                    print(f"{timestamp} INFO     action: apuesta_recibida | result: success | cantidad: {len(bets)}", flush=True)
+                    sys.stdout.flush()
+                    
+                    # También loguear normalmente
+                    logging.info(f"action: apuesta_recibida | result: success | cantidad: {len(bets)}")
+                    
                     # Send confirmation using protocol module
                     send_message_to_socket(client_sock, "OK")
                     
-                    # Log success with batch size
-                    logging.info(f"action: apuesta_recibida | result: success | cantidad: {len(bets)}")
-                    
                 except ConnectionError as e:
                     # Cliente cerró la conexión, es normal
-                    logging.debug(f"Client closed connection: {e}")
+                    logging.debug(f"Client closed connection")
                     break
                 except Exception as e:
                     # Error procesando el batch actual
                     logging.error(f"action: apuesta_recibida | result: fail | error: {e}")
+                    
                     try:
                         # Try to send error response
                         send_message_to_socket(client_sock, "ERROR")
-                        # Log failure - intentamos extraer la cantidad si es posible
-                        try:
-                            msg_len = len(msg.split(';')) if 'msg' in locals() else 0
-                            logging.error(f"action: apuesta_recibida | result: fail | cantidad: {msg_len}")
-                        except:
-                            logging.error(f"action: apuesta_recibida | result: fail | cantidad: unknown")
                     except:
                         pass  # Ignore errors when sending error response
                     break  # Salir del loop en caso de error
