@@ -7,6 +7,9 @@ Handles serialization/deserialization without using prohibited libraries
 FIELD_SEPARATOR = '|'
 MESSAGE_SEPARATOR = '\n'
 BATCH_SEPARATOR = ';'
+MAX_PACKET_SIZE = 8192  # 8KB máximo por paquete
+HEADER_SIZE = 4  # 4 bytes para el length prefix
+MAX_PAYLOAD_SIZE = MAX_PACKET_SIZE - HEADER_SIZE  # 8188 bytes para datos
 
 def serialize_bet(agency, first_name, last_name, document, birthdate, number):
     """
@@ -108,9 +111,14 @@ def create_message(data):
     """
     Create a length-prefixed message
     Format: [4 bytes length][message data]
+    Validates that message doesn't exceed maximum size
     """
     if isinstance(data, str):
         data = data.encode('utf-8')
+    
+    # Validar que el mensaje no exceda el tamaño máximo
+    if len(data) > MAX_PAYLOAD_SIZE:
+        raise ValueError(f"Message size ({len(data)} bytes) exceeds maximum allowed ({MAX_PAYLOAD_SIZE} bytes)")
     
     length_prefix = int_to_bytes(len(data))
     return length_prefix + data
@@ -119,6 +127,7 @@ def read_message_from_socket(sock):
     """
     Read a complete length-prefixed message from a socket
     First reads 4 bytes for length, then reads the message body
+    Validates that message doesn't exceed maximum size
     """
     # Read 4-byte length prefix
     length_data = b""
@@ -131,6 +140,10 @@ def read_message_from_socket(sock):
     # Convert bytes to integer
     msg_length = bytes_to_int(length_data)
     
+    # Validar que el mensaje no exceda el tamaño máximo permitido
+    if msg_length > MAX_PAYLOAD_SIZE:
+        raise ValueError(f"Message length ({msg_length}) exceeds maximum allowed ({MAX_PAYLOAD_SIZE})")
+    
     # Si el mensaje tiene longitud 0, retornar string vacío
     if msg_length == 0:
         return ""
@@ -139,7 +152,9 @@ def read_message_from_socket(sock):
     msg_data = b""
     while len(msg_data) < msg_length:
         remaining = msg_length - len(msg_data)
-        chunk = sock.recv(min(remaining, 4096))
+        # Limitar la lectura para no exceder el buffer
+        chunk_size = min(remaining, 4096, MAX_PAYLOAD_SIZE)
+        chunk = sock.recv(chunk_size)
         if not chunk:
             raise ConnectionError("Connection closed while reading message")
         msg_data += chunk

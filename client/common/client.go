@@ -238,6 +238,7 @@ func (c *Client) StartClientLoop() {
 		}
 	}()
 
+	// Buscar y cargar apuestas desde el archivo CSV
 	csvFilename := fmt.Sprintf("/data/agency-%s.csv", c.config.ID)
 
 	apuestas, err := c.loadApuestasFromCSV(csvFilename)
@@ -254,42 +255,90 @@ func (c *Client) StartClientLoop() {
 		return
 	}
 
-	// Calcular número de batches necesarios
-	totalBatches := (len(apuestas) + c.config.BatchSize - 1) / c.config.BatchSize
+	// Calcular el tamaño óptimo de batch basado en las apuestas reales
+	// Tomar una muestra para estimar
+	sampleSize := 10
+	if len(apuestas) < sampleSize {
+		sampleSize = len(apuestas)
+	}
+	optimalBatchSize := CalculateOptimalBatchSize(apuestas[:sampleSize])
 
-	// Limitar al número configurado de loops (cada loop es un batch)
+	// Usar el menor entre el configurado y el óptimo
+	effectiveBatchSize := c.config.BatchSize
+	if optimalBatchSize < effectiveBatchSize {
+		log.Infof("Adjusting batch size from %d to %d to fit within 8KB limit",
+			effectiveBatchSize, optimalBatchSize)
+		effectiveBatchSize = optimalBatchSize
+	}
+
+	// Dividir las apuestas en batches que cumplan con el límite de tamaño
+	allBatches := SplitBatchToFitSize(apuestas)
+
+	// Alternativamente, usar el tamaño de batch configurado si es seguro
+	if effectiveBatchSize > 0 {
+		// Reorganizar según el batch size configurado, pero verificando el tamaño
+		var safeBatches [][]Apuesta
+		for i := 0; i < len(apuestas); i += effectiveBatchSize {
+			end := i + effectiveBatchSize
+			if end > len(apuestas) {
+				end = len(apuestas)
+			}
+
+			batch := apuestas[i:end]
+
+			// Verificar que el batch no exceda el límite
+			testData := SerializeBatch(batch)
+			if len(testData) > MaxPayloadSize {
+				// Si excede, usar la división automática para este conjunto
+				subBatches := SplitBatchToFitSize(batch)
+				safeBatches = append(safeBatches, subBatches...)
+			} else {
+				safeBatches = append(safeBatches, batch)
+			}
+		}
+		allBatches = safeBatches
+	}
+
+	// Calcular número de batches a enviar
+	totalBatches := len(allBatches)
 	batchesToSend := totalBatches
 	if c.config.LoopAmount > 0 && c.config.LoopAmount < batchesToSend {
 		batchesToSend = c.config.LoopAmount
 	}
 
-	log.Debugf("Total apuestas: %d, Batch size: %d, Total batches: %d, Batches to send: %d",
-		len(apuestas), c.config.BatchSize, totalBatches, batchesToSend)
+	log.Infof("Will send %d batches (total available: %d)", batchesToSend, totalBatches)
 
 	batchesSent := 0
 
-	for i := 0; i < len(apuestas) && batchesSent < batchesToSend; i += c.config.BatchSize {
+	for batchIdx := 0; batchIdx < batchesToSend; batchIdx++ {
 		select {
 		case <-c.stop:
 			return
 		default:
 		}
 
-		// Determinar el rango del batch actual
-		end := i + c.config.BatchSize
-		if end > len(apuestas) {
-			end = len(apuestas)
+		batch := allBatches[batchIdx]
+
+		// Serializar el batch con verificación de tamaño
+		data, err := SerializeBatchSafe(batch)
+		if err != nil {
+			log.Errorf("action: batch_size_error | result: fail | client_id: %v | error: %v", c.config.ID, err)
+			// Intentar dividir el batch si es muy grande
+			subBatches := SplitBatchToFitSize(batch)
+			if len(subBatches) > 0 {
+				log.Infof("Batch too large, splitting into %d sub-batches", len(subBatches))
+				// Enviar el primer sub-batch
+				data = SerializeBatch(subBatches[0])
+				batch = subBatches[0]
+			} else {
+				continue
+			}
 		}
 
-		batch := apuestas[i:end]
-
-		// Serializar el batch usando el protocolo
-		data := SerializeBatch(batch)
-
-		// Verificar que el tamaño no exceda 8KB
-		if len(data) > 8192 {
-			log.Warningf("action: batch_size_warning | batch_size: %d bytes | max: 8192", len(data))
-		}
+		// Log del tamaño del paquete
+		packetSize := len(data) + HeaderSize
+		log.Debugf("Sending batch %d/%d: %d bets, packet size: %d bytes (max: %d)",
+			batchIdx+1, batchesToSend, len(batch), packetSize, MaxPacketSize)
 
 		// Enviar el batch
 		if err := c.sendMessage(data); err != nil {
@@ -307,12 +356,9 @@ func (c *Client) StartClientLoop() {
 		// Verificar respuesta
 		if response == "OK" {
 			log.Infof("action: batch_enviado | result: success | client_id: %v | batch_size: %d", c.config.ID, len(batch))
-			// Log adicional para debugging
-			log.Debugf("Batch %d/%d sent successfully with %d bets", batchesSent+1, batchesToSend, len(batch))
 		} else {
 			log.Errorf("action: batch_enviado | result: fail | client_id: %v | batch_size: %d | response: %v",
 				c.config.ID, len(batch), response)
-			// En caso de error, salir del loop
 			return
 		}
 
