@@ -56,10 +56,6 @@ class Server:
                     # Read complete message using protocol module
                     msg = read_message_from_socket(client_sock)
                     
-                    # Si no hay mensaje, la conexión se cerró
-                    if not msg:
-                        break
-                    
                     # Parse batch message using protocol module
                     bets_data = deserialize_batch(msg)
                     
@@ -91,8 +87,9 @@ class Server:
                     # Log success with batch size
                     logging.info(f"action: apuesta_recibida | result: success | cantidad: {len(bets)}")
                     
-                except ConnectionError:
+                except ConnectionError as e:
                     # Cliente cerró la conexión, es normal
+                    logging.debug(f"Client closed connection: {e}")
                     break
                 except Exception as e:
                     # Error procesando el batch actual

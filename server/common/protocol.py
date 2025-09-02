@@ -131,6 +131,10 @@ def read_message_from_socket(sock):
     # Convert bytes to integer
     msg_length = bytes_to_int(length_data)
     
+    # Si el mensaje tiene longitud 0, retornar string vacío
+    if msg_length == 0:
+        return ""
+    
     # Read the message body
     msg_data = b""
     while len(msg_data) < msg_length:

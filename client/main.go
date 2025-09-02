@@ -124,12 +124,18 @@ func main() {
 	stopChan := make(chan os.Signal, 1)
 	signal.Notify(stopChan, syscall.SIGTERM)
 
+	finished := make(chan bool)
+
 	go func() {
-		<-stopChan
-		log.Infof("action: exit | result: success | client_id: %v", clientConfig.ID)
-		client.Shutdown()
-		os.Exit(0)
+		client.StartClientLoop()
+		finished <- true
 	}()
 
-	client.StartClientLoop()
+	select {
+	case <-stopChan:
+		log.Infof("action: exit | result: success | client_id: %v", clientConfig.ID)
+		client.Shutdown()
+	case <-finished:
+		log.Infof("action: exit | result: success | client_id: %v", clientConfig.ID)
+	}
 }

@@ -238,7 +238,6 @@ func (c *Client) StartClientLoop() {
 		}
 	}()
 
-	// Buscar y cargar apuestas desde el archivo CSV
 	csvFilename := fmt.Sprintf("/data/agency-%s.csv", c.config.ID)
 
 	apuestas, err := c.loadApuestasFromCSV(csvFilename)
@@ -258,11 +257,14 @@ func (c *Client) StartClientLoop() {
 	// Calcular número de batches necesarios
 	totalBatches := (len(apuestas) + c.config.BatchSize - 1) / c.config.BatchSize
 
-	// Limitar al número configurado de loops
+	// Limitar al número configurado de loops (cada loop es un batch)
 	batchesToSend := totalBatches
-	if c.config.LoopAmount < batchesToSend {
+	if c.config.LoopAmount > 0 && c.config.LoopAmount < batchesToSend {
 		batchesToSend = c.config.LoopAmount
 	}
+
+	log.Debugf("Total apuestas: %d, Batch size: %d, Total batches: %d, Batches to send: %d",
+		len(apuestas), c.config.BatchSize, totalBatches, batchesToSend)
 
 	batchesSent := 0
 
@@ -305,9 +307,13 @@ func (c *Client) StartClientLoop() {
 		// Verificar respuesta
 		if response == "OK" {
 			log.Infof("action: batch_enviado | result: success | client_id: %v | batch_size: %d", c.config.ID, len(batch))
+			// Log adicional para debugging
+			log.Debugf("Batch %d/%d sent successfully with %d bets", batchesSent+1, batchesToSend, len(batch))
 		} else {
 			log.Errorf("action: batch_enviado | result: fail | client_id: %v | batch_size: %d | response: %v",
 				c.config.ID, len(batch), response)
+			// En caso de error, salir del loop
+			return
 		}
 
 		batchesSent++
