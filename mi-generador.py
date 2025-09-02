@@ -94,7 +94,7 @@ with open(archivo, "w") as f:
         f.write("    restart: on-failure\n")
         f.write("    volumes:\n")
         f.write("      - ./client/config.yaml:/config.yaml:ro\n")
-        f.write("      - ./.data/agency-${i}.csv:/data/agency-${i}.csv:ro\n")
+        f.write("      - ./.data/:/data/:ro\n")
 
     # Redes
     f.write("\nnetworks:\n")
