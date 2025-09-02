@@ -239,7 +239,7 @@ func (c *Client) StartClientLoop() {
 	}()
 
 	// Buscar y cargar apuestas desde el archivo CSV
-	csvFilename := fmt.Sprintf("/.data/agency-%s.csv", c.config.ID)
+	csvFilename := fmt.Sprintf("/data/agency-%s.csv", c.config.ID)
 
 	apuestas, err := c.loadApuestasFromCSV(csvFilename)
 	if err != nil {
