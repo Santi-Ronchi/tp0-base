@@ -6,7 +6,7 @@ Handles serialization/deserialization without using prohibited libraries
 # Protocol constants
 FIELD_SEPARATOR = '|'
 MESSAGE_SEPARATOR = '\n'
-
+BATCH_SEPARATOR = ';'
 
 def serialize_bet(agency, first_name, last_name, document, birthdate, number):
     """
@@ -15,13 +15,13 @@ def serialize_bet(agency, first_name, last_name, document, birthdate, number):
     """
     return f"{agency}{FIELD_SEPARATOR}{first_name}{FIELD_SEPARATOR}{last_name}{FIELD_SEPARATOR}{document}{FIELD_SEPARATOR}{birthdate}{FIELD_SEPARATOR}{number}"
 
-
 def deserialize_bet(message):
     """
     Deserialize wire format to bet data dictionary
     Returns a dictionary with bet fields
     """
     parts = message.split(FIELD_SEPARATOR)
+    
     if len(parts) != 6:
         raise ValueError(f"Invalid message format: expected 6 fields, got {len(parts)}")
     
@@ -34,6 +34,46 @@ def deserialize_bet(message):
         "number": parts[5]
     }
 
+def deserialize_batch(message):
+    """
+    Deserialize a batch of bets from wire format
+    Format: bet1;bet2;bet3...
+    Returns a list of dictionaries with bet fields
+    """
+    if not message:
+        return []
+    
+    # Split by batch separator
+    bets_str = message.split(BATCH_SEPARATOR)
+    bets = []
+    
+    for bet_str in bets_str:
+        if bet_str:  # Skip empty strings
+            bet_data = deserialize_bet(bet_str)
+            bets.append(bet_data)
+    
+    return bets
+
+def serialize_batch(bets):
+    """
+    Serialize a batch of bets to wire format
+    Input: List of bet dictionaries
+    Output: String with format bet1;bet2;bet3...
+    """
+    serialized_bets = []
+    
+    for bet in bets:
+        serialized = serialize_bet(
+            bet['agency'],
+            bet['first_name'],
+            bet['last_name'],
+            bet['document'],
+            bet['birthdate'],
+            bet['number']
+        )
+        serialized_bets.append(serialized)
+    
+    return BATCH_SEPARATOR.join(serialized_bets)
 
 def int_to_bytes(value):
     """
@@ -51,7 +91,6 @@ def int_to_bytes(value):
         value & 0xFF
     ])
 
-
 def bytes_to_int(byte_data):
     """
     Convert 4 bytes to integer (big-endian)
@@ -65,7 +104,6 @@ def bytes_to_int(byte_data):
     result = (byte_data[0] << 24) | (byte_data[1] << 16) | (byte_data[2] << 8) | byte_data[3]
     return result
 
-
 def create_message(data):
     """
     Create a length-prefixed message
@@ -76,7 +114,6 @@ def create_message(data):
     
     length_prefix = int_to_bytes(len(data))
     return length_prefix + data
-
 
 def read_message_from_socket(sock):
     """
@@ -104,7 +141,6 @@ def read_message_from_socket(sock):
         msg_data += chunk
     
     return msg_data.decode('utf-8').strip()
-
 
 def send_message_to_socket(sock, message):
     """

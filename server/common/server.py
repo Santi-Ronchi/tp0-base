@@ -3,11 +3,10 @@ import logging
 import signal
 from common.utils import Bet, store_bets
 from common.protocol import (
-    deserialize_bet,
+    deserialize_batch,
     read_message_from_socket,
     send_message_to_socket
 )
-
 
 class Server:
     def __init__(self, port, listen_backlog):
@@ -23,7 +22,7 @@ class Server:
         self.running = False
         if self._server_socket:
             self._server_socket.close()
-            logging.info("Server socket closed")
+        logging.info("Server socket closed")
 
     def run(self):
         """
@@ -42,6 +41,7 @@ class Server:
                     break
                 else:
                     logging.error("Unexpected OSError while accepting connections")
+        
         logging.info("Server loop exited gracefully")
 
     def __handle_client_connection(self, client_sock):
@@ -54,32 +54,42 @@ class Server:
             # Read complete message using protocol module
             msg = read_message_from_socket(client_sock)
             
-            # Parse message using protocol module
-            bet_data = deserialize_bet(msg)
+            # Parse batch message using protocol module
+            bets_data = deserialize_batch(msg)
             
-            # Create Bet object
-            bet = Bet(
-                agency=bet_data["agency"],
-                first_name=bet_data["first_name"],
-                last_name=bet_data["last_name"],
-                document=bet_data["document"],
-                birthdate=bet_data["birthdate"],
-                number=bet_data["number"]
-            )
-
-            # Store the bet
-            store_bets([bet])
-
+            # Create Bet objects
+            bets = []
+            for bet_data in bets_data:
+                bet = Bet(
+                    agency=bet_data["agency"],
+                    first_name=bet_data["first_name"],
+                    last_name=bet_data["last_name"],
+                    document=bet_data["document"],
+                    birthdate=bet_data["birthdate"],
+                    number=bet_data["number"]
+                )
+                bets.append(bet)
+            
+            # Store all bets in the batch
+            store_bets(bets)
+            
             # Send confirmation using protocol module
             send_message_to_socket(client_sock, "OK")
             
-            logging.info(f"action: apuesta_almacenada | result: success | dni: {bet.document} | numero: {bet.number}")
-        
+            # Log success with batch size
+            logging.info(f"action: apuesta_recibida | result: success | cantidad: {len(bets)}")
+            
         except Exception as e:
-            logging.error(f"action: apuesta_almacenada | result: fail | error: {e}")
+            logging.error(f"action: apuesta_recibida | result: fail | error: {e}")
             try:
                 # Try to send error response
                 send_message_to_socket(client_sock, "ERROR")
+                # Log failure - intentamos extraer la cantidad si es posible
+                try:
+                    msg_len = len(msg.split(';')) if 'msg' in locals() else 0
+                    logging.error(f"action: apuesta_recibida | result: fail | cantidad: {msg_len}")
+                except:
+                    logging.error(f"action: apuesta_recibida | result: fail | cantidad: unknown")
             except:
                 pass  # Ignore errors when sending error response
         finally:

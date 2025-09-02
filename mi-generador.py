@@ -68,7 +68,7 @@ with open(archivo, "w") as f:
     f.write("    restart: on-failure\n")
     f.write("    volumes:\n")
     f.write("      - ./server/config.ini:/config.ini:ro\n")
-    f.write("      - ./bets.csv:/bets.csv:rw\n") 
+    f.write("      - ./bets.csv:/bets.csv:rw\n")
 
     # Clientes
     for i in range(1, cantidad + 1):
@@ -94,6 +94,7 @@ with open(archivo, "w") as f:
         f.write("    restart: on-failure\n")
         f.write("    volumes:\n")
         f.write("      - ./client/config.yaml:/config.yaml:ro\n")
+        f.write("      - ./.data/agency-${i}.csv:/data/agency-${i}.csv:ro\n")
 
     # Redes
     f.write("\nnetworks:\n")

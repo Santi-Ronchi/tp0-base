@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/binary"
 	"fmt"
+	"strconv"
 	"strings"
 )
 
@@ -11,6 +12,7 @@ import (
 const (
 	FieldSeparator   = "|"
 	MessageSeparator = "\n"
+	BatchSeparator   = ";"
 )
 
 // SerializeApuesta converts Apuesta to wire format using custom protocol
@@ -31,6 +33,34 @@ func SerializeApuesta(a Apuesta) []byte {
 	return []byte(msg)
 }
 
+// SerializeBatch convierte un batch de apuestas al formato wire
+// Format: apuesta1;apuesta2;apuesta3...
+func SerializeBatch(apuestas []Apuesta) []byte {
+	var buffer bytes.Buffer
+
+	for i, apuesta := range apuestas {
+		if i > 0 {
+			buffer.WriteString(BatchSeparator)
+		}
+		// Formato de cada apuesta en el batch
+		msg := fmt.Sprintf("%d%s%s%s%s%s%s%s%s%s%d",
+			apuesta.Agency,
+			FieldSeparator,
+			apuesta.FirstName,
+			FieldSeparator,
+			apuesta.LastName,
+			FieldSeparator,
+			apuesta.Document,
+			FieldSeparator,
+			apuesta.Birthdate,
+			FieldSeparator,
+			apuesta.Number)
+		buffer.WriteString(msg)
+	}
+
+	return buffer.Bytes()
+}
+
 // DeserializeApuesta converts wire format to Apuesta struct
 func DeserializeApuesta(data []byte) (*Apuesta, error) {
 	str := string(data)
@@ -40,13 +70,12 @@ func DeserializeApuesta(data []byte) (*Apuesta, error) {
 		return nil, fmt.Errorf("invalid message format: expected 6 fields, got %d", len(parts))
 	}
 
-	var agency, number int
-	_, err := fmt.Sscanf(parts[0], "%d", &agency)
+	agency, err := strconv.Atoi(parts[0])
 	if err != nil {
 		return nil, fmt.Errorf("invalid agency: %v", err)
 	}
 
-	_, err = fmt.Sscanf(parts[5], "%d", &number)
+	number, err := strconv.Atoi(parts[5])
 	if err != nil {
 		return nil, fmt.Errorf("invalid number: %v", err)
 	}
@@ -59,6 +88,30 @@ func DeserializeApuesta(data []byte) (*Apuesta, error) {
 		Birthdate: parts[4],
 		Number:    number,
 	}, nil
+}
+
+// DeserializeBatch convierte el formato wire a un slice de Apuestas
+func DeserializeBatch(data []byte) ([]*Apuesta, error) {
+	str := string(data)
+
+	// Si está vacío, retornar slice vacío
+	if len(str) == 0 {
+		return []*Apuesta{}, nil
+	}
+
+	// Dividir por el separador de batch
+	betsStr := strings.Split(str, BatchSeparator)
+	apuestas := make([]*Apuesta, 0, len(betsStr))
+
+	for _, betStr := range betsStr {
+		apuesta, err := DeserializeApuesta([]byte(betStr))
+		if err != nil {
+			return nil, fmt.Errorf("error deserializing bet in batch: %v", err)
+		}
+		apuestas = append(apuestas, apuesta)
+	}
+
+	return apuestas, nil
 }
 
 // CreateMessage creates a length-prefixed message

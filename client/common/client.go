@@ -1,9 +1,11 @@
 package common
 
 import (
+	"encoding/csv"
+	"fmt"
+	"io"
 	"net"
 	"os"
-	"strconv"
 	"time"
 
 	"github.com/op/go-logging"
@@ -17,6 +19,7 @@ type ClientConfig struct {
 	ServerAddress string
 	LoopAmount    int
 	LoopPeriod    time.Duration
+	BatchSize     int // Agregado para configurar tamaño del batch
 }
 
 // Client Entity that encapsulates how
@@ -131,9 +134,68 @@ func (c *Client) readMessage() (string, error) {
 	return string(msgBuf), nil
 }
 
+// loadApuestasFromCSV lee las apuestas desde el archivo CSV
+func (c *Client) loadApuestasFromCSV(filename string) ([]Apuesta, error) {
+	file, err := os.Open(filename)
+	if err != nil {
+		return nil, fmt.Errorf("error opening CSV file: %v", err)
+	}
+	defer file.Close()
+
+	reader := csv.NewReader(file)
+
+	// Skip header if exists
+	if _, err := reader.Read(); err != nil {
+		return nil, fmt.Errorf("error reading CSV header: %v", err)
+	}
+
+	var apuestas []Apuesta
+
+	// Convertir el ID del cliente a int para usarlo como agency
+	var agency int
+	if _, err := fmt.Sscanf(c.config.ID, "%d", &agency); err != nil {
+		// Si el ID no es numérico, usar el valor 1 por defecto
+		log.Warningf("Client ID is not numeric (%s), using agency=1", c.config.ID)
+		agency = 1
+	}
+
+	for {
+		record, err := reader.Read()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			return nil, fmt.Errorf("error reading CSV record: %v", err)
+		}
+
+		// Esperamos formato CSV: nombre,apellido,documento,nacimiento,numero (5 campos)
+		if len(record) != 5 {
+			log.Warningf("Skipping invalid record (expected 5 fields, got %d): %v", len(record), record)
+			continue
+		}
+
+		var number int
+		if _, err := fmt.Sscanf(record[4], "%d", &number); err != nil {
+			log.Warningf("Invalid number in record: %v", record)
+			continue
+		}
+
+		apuesta := Apuesta{
+			Agency:    agency, // ID del cliente es el ID de la agencia
+			FirstName: record[0],
+			LastName:  record[1],
+			Document:  record[2],
+			Birthdate: record[3],
+			Number:    number,
+		}
+		apuestas = append(apuestas, apuesta)
+	}
+
+	return apuestas, nil
+}
+
 // StartClientLoop Send messages to the client until some time threshold is met
 func (c *Client) StartClientLoop() {
-
 	if err := c.createClientSocket(3, time.Second); err != nil {
 		log.Errorf("action: connect | result: fail | client_id: %v | error: %v", c.config.ID, err)
 		return
@@ -145,64 +207,71 @@ func (c *Client) StartClientLoop() {
 		}
 	}()
 
-	agencyStr := os.Getenv("AGENCIA")
-	numberStr := os.Getenv("NUMERO")
-	document := os.Getenv("DOCUMENTO")
-
-	agency, err := strconv.Atoi(agencyStr)
+	// Cargar apuestas desde el archivo CSV
+	csvFilename := fmt.Sprintf("/data/agency-%s.csv", c.config.ID)
+	apuestas, err := c.loadApuestasFromCSV(csvFilename)
 	if err != nil {
-		log.Criticalf("action: config | result: fail | field: AGENCIA | error: %v", err)
+		log.Errorf("action: load_csv | result: fail | client_id: %v | error: %v", c.config.ID, err)
 		return
 	}
 
-	number, err := strconv.Atoi(numberStr)
-	if err != nil {
-		log.Criticalf("action: config | result: fail | field: NUMERO | error: %v", err)
-		return
-	}
+	log.Infof("action: load_csv | result: success | client_id: %v | total_apuestas: %d", c.config.ID, len(apuestas))
 
-	apuesta := Apuesta{
-		Agency:    agency,
-		FirstName: os.Getenv("NOMBRE"),
-		LastName:  os.Getenv("APELLIDO"),
-		Document:  document,
-		Birthdate: os.Getenv("NACIMIENTO"),
-		Number:    number,
-	}
+	// Enviar apuestas en batches
+	//totalBatches := (len(apuestas) + c.config.BatchSize - 1) / c.config.BatchSize
+	batchesSent := 0
 
-	// Messages loop
-	for msgID := 1; msgID <= c.config.LoopAmount; msgID++ {
+	for i := 0; i < len(apuestas) && batchesSent < c.config.LoopAmount; i += c.config.BatchSize {
 		select {
 		case <-c.stop:
 			return
 		default:
 		}
 
-		// Serialize bet using custom protocol from protocol.go
-		data := SerializeApuesta(apuesta)
+		// Determinar el rango del batch actual
+		end := i + c.config.BatchSize
+		if end > len(apuestas) {
+			end = len(apuestas)
+		}
 
-		// Send message using length-prefixed protocol
+		batch := apuestas[i:end]
+
+		// Serializar el batch usando el protocolo
+		data := SerializeBatch(batch)
+
+		// Verificar que el tamaño no exceda 8KB
+		if len(data) > 8192 {
+			log.Warningf("action: batch_size_warning | batch_size: %d bytes | max: 8192", len(data))
+		}
+
+		// Enviar el batch
 		if err := c.sendMessage(data); err != nil {
-			log.Errorf("action: send_bet | result: fail | client_id: %v | error: %v", c.config.ID, err)
+			log.Errorf("action: send_batch | result: fail | client_id: %v | error: %v", c.config.ID, err)
 			return
 		}
 
-		// Read server response
+		// Leer respuesta del servidor
 		response, err := c.readMessage()
 		if err != nil {
 			log.Errorf("action: receive_confirmation | result: fail | client_id: %v | error: %v", c.config.ID, err)
 			return
 		}
 
-		// Check if server confirmed with OK
+		// Verificar respuesta
 		if response == "OK" {
-			log.Infof("action: apuesta_enviada | result: success | dni: %v | numero: %v", document, number)
+			log.Infof("action: batch_enviado | result: success | client_id: %v | batch_size: %d", c.config.ID, len(batch))
 		} else {
-			log.Errorf("action: apuesta_enviada | result: fail | dni: %v | numero: %v | response: %v", document, number, response)
+			log.Errorf("action: batch_enviado | result: fail | client_id: %v | batch_size: %d | response: %v",
+				c.config.ID, len(batch), response)
 		}
 
-		// Wait the configured period before sending a new bet
-		time.Sleep(c.config.LoopPeriod)
+		batchesSent++
+
+		// Si todavía hay más batches para enviar y no hemos alcanzado el límite
+		if batchesSent < c.config.LoopAmount && i+c.config.BatchSize < len(apuestas) {
+			time.Sleep(c.config.LoopPeriod)
+		}
 	}
-	log.Infof("action: loop_finished | result: success | client_id: %v", c.config.ID)
+
+	log.Infof("action: loop_finished | result: success | client_id: %v | batches_sent: %d", c.config.ID, batchesSent)
 }

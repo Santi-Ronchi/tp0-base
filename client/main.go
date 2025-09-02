@@ -7,11 +7,10 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/7574-sistemas-distribuidos/docker-compose-init/client/common"
 	"github.com/op/go-logging"
 	"github.com/pkg/errors"
 	"github.com/spf13/viper"
-
-	"github.com/7574-sistemas-distribuidos/docker-compose-init/client/common"
 )
 
 var log = logging.MustGetLogger("log")
@@ -37,6 +36,7 @@ func InitConfig() (*viper.Viper, error) {
 	v.BindEnv("server", "address")
 	v.BindEnv("loop", "period")
 	v.BindEnv("loop", "amount")
+	v.BindEnv("batch", "maxAmount")
 	v.BindEnv("log", "level")
 
 	// Try to read configuration from config file. If config file
@@ -44,10 +44,14 @@ func InitConfig() (*viper.Viper, error) {
 	// can be loaded from the environment variables so we shouldn't
 	// return an error in that case
 	v.SetConfigFile("./config.yaml")
-	_ = v.ReadInConfig()
+	if err := v.ReadInConfig(); err != nil {
+		log.Debugf("Config file not found or error reading it: %v", err)
+	}
+
+	// Set default values
+	v.SetDefault("batch.maxAmount", 50) // Default para mantener paquetes bajo 8KB
 
 	// Parse time.Duration variables and return an error if those variables cannot be parsed
-
 	if _, err := time.ParseDuration(v.GetString("loop.period")); err != nil {
 		return nil, errors.Wrapf(err, "Could not parse CLI_LOOP_PERIOD env var as time.Duration.")
 	}
@@ -61,7 +65,7 @@ func InitConfig() (*viper.Viper, error) {
 func InitLogger(logLevel string) error {
 	baseBackend := logging.NewLogBackend(os.Stdout, "", 0)
 	format := logging.MustStringFormatter(
-		`%{time:2006-01-02 15:04:05} %{level:.5s}     %{message}`,
+		`%{time:2006-01-02 15:04:05} %{level:.5s} %{message}`,
 	)
 	backendFormatter := logging.NewBackendFormatter(baseBackend, format)
 
@@ -74,17 +78,19 @@ func InitLogger(logLevel string) error {
 
 	// Set the backends to be used.
 	logging.SetBackend(backendLeveled)
+
 	return nil
 }
 
 // PrintConfig Print all the configuration parameters of the program.
 // For debugging purposes only
 func PrintConfig(v *viper.Viper) {
-	log.Infof("action: config | result: success | client_id: %s | server_address: %s | loop_amount: %v | loop_period: %v | log_level: %s",
+	log.Infof("action: config | result: success | client_id: %s | server_address: %s | loop_amount: %v | loop_period: %v | batch_size: %v | log_level: %s",
 		v.GetString("id"),
 		v.GetString("server.address"),
 		v.GetInt("loop.amount"),
 		v.GetDuration("loop.period"),
+		v.GetInt("batch.maxAmount"),
 		v.GetString("log.level"),
 	)
 }
@@ -109,6 +115,7 @@ func main() {
 		ID:            v.GetString("id"),
 		LoopAmount:    v.GetInt("loop.amount"),
 		LoopPeriod:    v.GetDuration("loop.period"),
+		BatchSize:     v.GetInt("batch.maxAmount"),
 	}
 
 	client := common.NewClient(clientConfig)
@@ -116,6 +123,7 @@ func main() {
 	// Manejo de SIGTERM para shutdown graceful
 	stopChan := make(chan os.Signal, 1)
 	signal.Notify(stopChan, syscall.SIGTERM)
+
 	go func() {
 		<-stopChan
 		log.Infof("action: exit | result: success | client_id: %v", clientConfig.ID)
