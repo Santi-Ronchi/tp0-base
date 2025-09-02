@@ -134,6 +134,7 @@ func main() {
 	select {
 	case <-stopChan:
 		log.Infof("action: exit | result: success | client_id: %v", clientConfig.ID)
+		time.Sleep(1 * time.Second) // Esperar a que terminen los logs pendientes
 		client.Shutdown()
 	case <-finished:
 		log.Infof("action: exit | result: success | client_id: %v", clientConfig.ID)
