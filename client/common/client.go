@@ -144,9 +144,22 @@ func (c *Client) loadApuestasFromCSV(filename string) ([]Apuesta, error) {
 
 	reader := csv.NewReader(file)
 
-	// Skip header if exists
-	if _, err := reader.Read(); err != nil {
-		return nil, fmt.Errorf("error reading CSV header: %v", err)
+	// Skip header if exists - check if first line contains headers
+	firstLine, err := reader.Read()
+	if err != nil {
+		if err == io.EOF {
+			return []Apuesta{}, nil // Archivo vacío
+		}
+		return nil, fmt.Errorf("error reading CSV: %v", err)
+	}
+
+	// Check if it's a header line (contains "nombre" or similar)
+	isHeader := false
+	if len(firstLine) == 5 {
+		// Simple check: if first field contains letters, it's probably a header
+		if firstLine[0] == "nombre" || firstLine[0] == "Nombre" || firstLine[0] == "NOMBRE" {
+			isHeader = true
+		}
 	}
 
 	var apuestas []Apuesta
@@ -159,13 +172,31 @@ func (c *Client) loadApuestasFromCSV(filename string) ([]Apuesta, error) {
 		agency = 1
 	}
 
+	// Si no era header, procesar la primera línea
+	if !isHeader && len(firstLine) == 5 {
+		var number int
+		if _, err := fmt.Sscanf(firstLine[4], "%d", &number); err == nil {
+			apuesta := Apuesta{
+				Agency:    agency,
+				FirstName: firstLine[0],
+				LastName:  firstLine[1],
+				Document:  firstLine[2],
+				Birthdate: firstLine[3],
+				Number:    number,
+			}
+			apuestas = append(apuestas, apuesta)
+		}
+	}
+
+	// Procesar el resto del archivo
 	for {
 		record, err := reader.Read()
 		if err == io.EOF {
 			break
 		}
 		if err != nil {
-			return nil, fmt.Errorf("error reading CSV record: %v", err)
+			log.Warningf("Error reading CSV record: %v", err)
+			continue
 		}
 
 		// Esperamos formato CSV: nombre,apellido,documento,nacimiento,numero (5 campos)
@@ -207,8 +238,9 @@ func (c *Client) StartClientLoop() {
 		}
 	}()
 
-	// Cargar apuestas desde el archivo CSV
-	csvFilename := fmt.Sprintf("/data/agency-%s.csv", c.config.ID)
+	// Buscar y cargar apuestas desde el archivo CSV
+	csvFilename := fmt.Sprintf("/.data/agency-%s.csv", c.config.ID)
+
 	apuestas, err := c.loadApuestasFromCSV(csvFilename)
 	if err != nil {
 		log.Errorf("action: load_csv | result: fail | client_id: %v | error: %v", c.config.ID, err)
@@ -217,11 +249,24 @@ func (c *Client) StartClientLoop() {
 
 	log.Infof("action: load_csv | result: success | client_id: %v | total_apuestas: %d", c.config.ID, len(apuestas))
 
-	// Enviar apuestas en batches
-	//totalBatches := (len(apuestas) + c.config.BatchSize - 1) / c.config.BatchSize
+	// Si no hay apuestas, salir
+	if len(apuestas) == 0 {
+		log.Warningf("No bets found in CSV file for client %v", c.config.ID)
+		return
+	}
+
+	// Calcular número de batches necesarios
+	totalBatches := (len(apuestas) + c.config.BatchSize - 1) / c.config.BatchSize
+
+	// Limitar al número configurado de loops
+	batchesToSend := totalBatches
+	if c.config.LoopAmount < batchesToSend {
+		batchesToSend = c.config.LoopAmount
+	}
+
 	batchesSent := 0
 
-	for i := 0; i < len(apuestas) && batchesSent < c.config.LoopAmount; i += c.config.BatchSize {
+	for i := 0; i < len(apuestas) && batchesSent < batchesToSend; i += c.config.BatchSize {
 		select {
 		case <-c.stop:
 			return
@@ -267,8 +312,8 @@ func (c *Client) StartClientLoop() {
 
 		batchesSent++
 
-		// Si todavía hay más batches para enviar y no hemos alcanzado el límite
-		if batchesSent < c.config.LoopAmount && i+c.config.BatchSize < len(apuestas) {
+		// Si todavía hay más batches para enviar
+		if batchesSent < batchesToSend {
 			time.Sleep(c.config.LoopPeriod)
 		}
 	}
