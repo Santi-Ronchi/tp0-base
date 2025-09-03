@@ -107,7 +107,6 @@ func main() {
 		os.Exit(1)
 	}
 
-	// Print program config with debugging purposes
 	PrintConfig(v)
 
 	clientConfig := common.ClientConfig{
@@ -120,17 +119,27 @@ func main() {
 
 	client := common.NewClient(clientConfig)
 
-	// Manejo de SIGTERM para shutdown graceful - usando el patrón de la versión vieja
+	// Canal para señalar cuando el cliente termine su trabajo
+	done := make(chan bool)
+
+	// Manejo de SIGTERM para shutdown graceful
 	stopChan := make(chan os.Signal, 1)
 	signal.Notify(stopChan, syscall.SIGTERM)
 
+	// Ejecutar el cliente en una goroutine
 	go func() {
-		<-stopChan
-		client.Shutdown()
-		log.Infof("action: exit | result: success | client_id: %v", clientConfig.ID)
-		os.Exit(0)
+		client.StartClientLoop()
+		done <- true
 	}()
 
-	// Ejecutar el client loop en el hilo principal
-	client.StartClientLoop()
+	// Esperar a que termine el cliente O reciba SIGTERM
+	select {
+	case <-done:
+		log.Infof("action: exitDone | result: success | client_id: %v | reason: finished", clientConfig.ID)
+	case <-stopChan:
+		client.Shutdown()
+		log.Infof("action: exitTERM | result: success | client_id: %v | reason: sigterm", clientConfig.ID)
+	}
+
+	os.Exit(0)
 }
