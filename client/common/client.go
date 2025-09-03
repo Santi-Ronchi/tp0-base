@@ -6,6 +6,7 @@ import (
 	"io"
 	"net"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/op/go-logging"
@@ -217,8 +218,9 @@ func (sbp *StreamingBatchProcessor) sendCurrentBatch() error {
 	log.Debugf("Sending batch: %d bets, packet size: %d bytes (max: %d)",
 		len(sbp.currentBatch), len(data)+HeaderSize, MaxPacketSize)
 
-	// Enviar el batch
-	if err := sbp.client.sendMessage(data); err != nil {
+	// Enviar el batch con el prefijo "BET:"
+	message := append([]byte("BET:"), data...)
+	if err := sbp.client.sendMessage(message); err != nil {
 		return fmt.Errorf("error sending batch: %v", err)
 	}
 
@@ -252,6 +254,60 @@ func (sbp *StreamingBatchProcessor) sendCurrentBatch() error {
 // FlushBatch envía cualquier batch restante
 func (sbp *StreamingBatchProcessor) FlushBatch() error {
 	return sbp.sendCurrentBatch()
+}
+
+// notifyFinished notifica al servidor que terminó de enviar apuestas
+func (c *Client) notifyFinished() error {
+	log.Infof("action: notify_finished | result: in_progress | client_id: %v", c.config.ID)
+
+	// Enviar mensaje de finalización
+	if err := c.sendMessage([]byte("FINISHED")); err != nil {
+		return fmt.Errorf("error sending finished notification: %v", err)
+	}
+
+	// Leer confirmación
+	response, err := c.readMessage()
+	if err != nil {
+		return fmt.Errorf("error receiving finished confirmation: %v", err)
+	}
+
+	if response != "OK" {
+		return fmt.Errorf("unexpected response to FINISHED: %v", response)
+	}
+
+	log.Infof("action: notify_finished | result: success | client_id: %v", c.config.ID)
+	return nil
+}
+
+// queryWinners consulta los ganadores de la agencia
+func (c *Client) queryWinners() error {
+	log.Infof("action: query_winners | result: in_progress | client_id: %v", c.config.ID)
+
+	// Enviar consulta de ganadores
+	if err := c.sendMessage([]byte("WINNERS")); err != nil {
+		return fmt.Errorf("error sending winners query: %v", err)
+	}
+
+	// Leer respuesta con los ganadores
+	response, err := c.readMessage()
+	if err != nil {
+		return fmt.Errorf("error receiving winners: %v", err)
+	}
+
+	// Parsear la lista de ganadores (viene como lista separada por comas)
+	winners := []string{}
+	if response != "" && response != "NONE" {
+		winners = strings.Split(response, ",")
+	}
+
+	log.Infof("action: consulta_ganadores | result: success | cant_ganadores: %d", len(winners))
+
+	// Log adicional con los DNI de los ganadores si los hay
+	if len(winners) > 0 {
+		log.Debugf("Winners for agency %v: %v", c.config.ID, winners)
+	}
+
+	return nil
 }
 
 // processCSVStreaming procesa el CSV línea por línea sin cargar todo en memoria
@@ -387,6 +443,18 @@ func (c *Client) StartClientLoop() {
 
 	if err := c.processCSVStreaming(csvFilename); err != nil {
 		log.Errorf("action: process_csv_streaming | result: fail | client_id: %v | error: %v", c.config.ID, err)
+		return
+	}
+
+	// Notificar al servidor que terminamos de enviar apuestas
+	if err := c.notifyFinished(); err != nil {
+		log.Errorf("action: notify_finished | result: fail | client_id: %v | error: %v", c.config.ID, err)
+		return
+	}
+
+	// Consultar ganadores
+	if err := c.queryWinners(); err != nil {
+		log.Errorf("action: query_winners | result: fail | client_id: %v | error: %v", c.config.ID, err)
 		return
 	}
 }
