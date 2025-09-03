@@ -63,6 +63,7 @@ with open(archivo, "w") as f:
     f.write("    entrypoint: python3 /main.py\n")
     f.write("    environment:\n")
     f.write("      - PYTHONUNBUFFERED=1\n")
+    f.write(f"      - TOTAL_AGENCIES={cantidad}\n")
     f.write("    networks:\n")
     f.write("      - testing_net\n")
     f.write("    restart: on-failure\n")

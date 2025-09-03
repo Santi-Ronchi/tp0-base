@@ -10,7 +10,7 @@ from common.protocol import (
 )
 
 class Server:
-    def __init__(self, port, listen_backlog):
+    def __init__(self, port, listen_backlog, total_agencies):
         # Initialize server socket
         self._server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         self._server_socket.bind(('', port))
@@ -24,7 +24,7 @@ class Server:
         self.lottery_done = False  # Indica si se realizó el sorteo
         self.winners_by_agency = {}  # DNIs ganadores por agencia
         self.waiting_clients = []  # Clientes esperando resultados
-        self.total_agencies = 5  # Total de agencias esperadas
+        self.total_agencies = total_agencies  # Total de agencias esperadas
 
     def graceful_shutdown(self, signum, frame):
         logging.info("SIGTERM received, shutting down server gracefully")
