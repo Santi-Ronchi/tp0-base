@@ -120,23 +120,17 @@ func main() {
 
 	client := common.NewClient(clientConfig)
 
-	// Manejo de SIGTERM para shutdown graceful
+	// Manejo de SIGTERM para shutdown graceful - usando el patrón de la versión vieja
 	stopChan := make(chan os.Signal, 1)
 	signal.Notify(stopChan, syscall.SIGTERM)
 
-	finished := make(chan bool)
-
 	go func() {
-		client.StartClientLoop()
-		finished <- true
+		<-stopChan
+		client.Shutdown()
+		log.Infof("action: exit | result: success | client_id: %v", clientConfig.ID)
+		os.Exit(0)
 	}()
 
-	select {
-	case <-stopChan:
-		log.Infof("action: exit | result: success | client_id: %v", clientConfig.ID)
-		time.Sleep(10 * time.Second) // Esperar a que terminen los logs pendientes
-		client.Shutdown()
-	case <-finished:
-		log.Infof("action: exit | result: success | client_id: %v", clientConfig.ID)
-	}
+	// Ejecutar el client loop en el hilo principal
+	client.StartClientLoop()
 }
