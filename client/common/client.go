@@ -134,95 +134,217 @@ func (c *Client) readMessage() (string, error) {
 	return string(msgBuf), nil
 }
 
-// loadApuestasFromCSV lee las apuestas desde el archivo CSV
-func (c *Client) loadApuestasFromCSV(filename string) ([]Apuesta, error) {
+// StreamingBatchProcessor maneja el procesamiento de CSV en streaming
+type StreamingBatchProcessor struct {
+	client       *Client
+	currentBatch []Apuesta
+	currentSize  int
+	agency       int
+}
+
+// NewStreamingBatchProcessor crea un nuevo procesador de batches streaming
+func (c *Client) NewStreamingBatchProcessor() *StreamingBatchProcessor {
+	// Convertir el ID del cliente a int para usarlo como agency
+	var agency int
+	if _, err := fmt.Sscanf(c.config.ID, "%d", &agency); err != nil {
+		log.Warningf("Client ID is not numeric (%s), using agency=1", c.config.ID)
+		agency = 1
+	}
+
+	return &StreamingBatchProcessor{
+		client:       c,
+		currentBatch: make([]Apuesta, 0),
+		currentSize:  0,
+		agency:       agency,
+	}
+}
+
+// AddApuesta añade una apuesta al batch actual, enviándolo si se alcanza el límite
+func (sbp *StreamingBatchProcessor) AddApuesta(apuesta Apuesta) error {
+	// Estimar el tamaño de esta apuesta
+	apuestaSize := EstimateApuestaSize(apuesta)
+
+	// Considerar el separador si no es la primera apuesta
+	separatorSize := 0
+	if len(sbp.currentBatch) > 0 {
+		separatorSize = len(BatchSeparator)
+	}
+
+	// Si agregar esta apuesta excedería el límite, enviar el batch actual
+	if sbp.currentSize+apuestaSize+separatorSize > MaxPayloadSize {
+		if len(sbp.currentBatch) > 0 {
+			if err := sbp.sendCurrentBatch(); err != nil {
+				return err
+			}
+		}
+	}
+
+	// Agregar la apuesta al batch actual
+	sbp.currentBatch = append(sbp.currentBatch, apuesta)
+	sbp.currentSize += apuestaSize
+	if len(sbp.currentBatch) > 1 {
+		sbp.currentSize += len(BatchSeparator)
+	}
+
+	return nil
+}
+
+// sendCurrentBatch envía el batch actual y lo resetea
+func (sbp *StreamingBatchProcessor) sendCurrentBatch() error {
+	if len(sbp.currentBatch) == 0 {
+		return nil
+	}
+
+	// Serializar el batch
+	data := SerializeBatch(sbp.currentBatch)
+
+	log.Debugf("Sending batch: %d bets, packet size: %d bytes (max: %d)",
+		len(sbp.currentBatch), len(data)+HeaderSize, MaxPacketSize)
+
+	// Enviar el batch
+	if err := sbp.client.sendMessage(data); err != nil {
+		return fmt.Errorf("error sending batch: %v", err)
+	}
+
+	// Leer respuesta del servidor
+	response, err := sbp.client.readMessage()
+	if err != nil {
+		return fmt.Errorf("error receiving confirmation: %v", err)
+	}
+
+	// Verificar respuesta
+	if response == "OK" {
+		log.Infof("action: batch_enviado | result: success | client_id: %v | batch_size: %d",
+			sbp.client.config.ID, len(sbp.currentBatch))
+	} else {
+		return fmt.Errorf("server responded with: %v", response)
+	}
+
+	// Resetear el batch actual
+	sbp.currentBatch = sbp.currentBatch[:0] // Reutilizar el slice subyacente
+	sbp.currentSize = 0
+
+	return nil
+}
+
+// FlushBatch envía cualquier batch restante
+func (sbp *StreamingBatchProcessor) FlushBatch() error {
+	return sbp.sendCurrentBatch()
+}
+
+// processCSVStreaming procesa el CSV línea por línea sin cargar todo en memoria
+func (c *Client) processCSVStreaming(filename string) error {
 	file, err := os.Open(filename)
 	if err != nil {
-		return nil, fmt.Errorf("error opening CSV file: %v", err)
+		return fmt.Errorf("error opening CSV file: %v", err)
 	}
 	defer file.Close()
 
 	reader := csv.NewReader(file)
+	processor := c.NewStreamingBatchProcessor()
 
-	// Skip header if exists - check if first line contains headers
+	lineNumber := 0
+	batchesSent := 0
+
+	// Leer primera línea para verificar si es header
 	firstLine, err := reader.Read()
 	if err != nil {
 		if err == io.EOF {
-			return []Apuesta{}, nil // Archivo vacío
+			log.Warningf("CSV file is empty")
+			return nil
 		}
-		return nil, fmt.Errorf("error reading CSV: %v", err)
+		return fmt.Errorf("error reading CSV: %v", err)
 	}
+	lineNumber++
 
-	// Check if it's a header line (contains "nombre" or similar)
+	// Verificar si es header
 	isHeader := false
 	if len(firstLine) == 5 {
-		// Simple check: if first field contains letters, it's probably a header
 		if firstLine[0] == "nombre" || firstLine[0] == "Nombre" || firstLine[0] == "NOMBRE" {
 			isHeader = true
 		}
 	}
 
-	var apuestas []Apuesta
-
-	// Convertir el ID del cliente a int para usarlo como agency
-	var agency int
-	if _, err := fmt.Sscanf(c.config.ID, "%d", &agency); err != nil {
-		// Si el ID no es numérico, usar el valor 1 por defecto
-		log.Warningf("Client ID is not numeric (%s), using agency=1", c.config.ID)
-		agency = 1
-	}
-
-	// Si no era header, procesar la primera línea
+	// Si no es header, procesar la primera línea
 	if !isHeader && len(firstLine) == 5 {
-		var number int
-		if _, err := fmt.Sscanf(firstLine[4], "%d", &number); err == nil {
-			apuesta := Apuesta{
-				Agency:    agency,
-				FirstName: firstLine[0],
-				LastName:  firstLine[1],
-				Document:  firstLine[2],
-				Birthdate: firstLine[3],
-				Number:    number,
+		if apuesta, err := c.parseCSVRecord(firstLine, processor.agency); err == nil {
+			if err := processor.AddApuesta(*apuesta); err != nil {
+				return err
 			}
-			apuestas = append(apuestas, apuesta)
+		} else {
+			log.Warningf("Error parsing first record (line %d): %v", lineNumber, err)
 		}
 	}
 
-	// Procesar el resto del archivo
+	// Procesar el resto del archivo línea por línea
 	for {
+		select {
+		case <-c.stop:
+			return fmt.Errorf("processing stopped by signal")
+		default:
+		}
+
 		record, err := reader.Read()
 		if err == io.EOF {
 			break
 		}
 		if err != nil {
-			log.Warningf("Error reading CSV record: %v", err)
+			log.Warningf("Error reading CSV record (line %d): %v", lineNumber+1, err)
+			lineNumber++
 			continue
 		}
+		lineNumber++
 
-		// Esperamos formato CSV: nombre,apellido,documento,nacimiento,numero (5 campos)
-		if len(record) != 5 {
-			log.Warningf("Skipping invalid record (expected 5 fields, got %d): %v", len(record), record)
-			continue
+		// Procesar el record
+		if apuesta, err := c.parseCSVRecord(record, processor.agency); err == nil {
+			if err := processor.AddApuesta(*apuesta); err != nil {
+				return fmt.Errorf("error processing record (line %d): %v", lineNumber, err)
+			}
+		} else {
+			log.Warningf("Error parsing record (line %d): %v", lineNumber, err)
 		}
 
-		var number int
-		if _, err := fmt.Sscanf(record[4], "%d", &number); err != nil {
-			log.Warningf("Invalid number in record: %v", record)
-			continue
+		// Verificar si hemos alcanzado el límite de batches
+		if c.config.LoopAmount > 0 && batchesSent >= c.config.LoopAmount {
+			break
 		}
 
-		apuesta := Apuesta{
-			Agency:    agency, // ID del cliente es el ID de la agencia
-			FirstName: record[0],
-			LastName:  record[1],
-			Document:  record[2],
-			Birthdate: record[3],
-			Number:    number,
+		// Sleep si es necesario entre registros para controlar la velocidad
+		if c.config.LoopPeriod > 0 && lineNumber%100 == 0 {
+			time.Sleep(c.config.LoopPeriod / 100) // Pequeño delay cada 100 registros
 		}
-		apuestas = append(apuestas, apuesta)
 	}
 
-	return apuestas, nil
+	// Enviar cualquier batch restante
+	if err := processor.FlushBatch(); err != nil {
+		return fmt.Errorf("error flushing final batch: %v", err)
+	}
+
+	log.Infof("action: csv_processed | result: success | client_id: %v | lines_processed: %d",
+		c.config.ID, lineNumber)
+
+	return nil
+}
+
+// parseCSVRecord convierte un record de CSV a una estructura Apuesta
+func (c *Client) parseCSVRecord(record []string, agency int) (*Apuesta, error) {
+	if len(record) != 5 {
+		return nil, fmt.Errorf("invalid record format: expected 5 fields, got %d", len(record))
+	}
+
+	var number int
+	if _, err := fmt.Sscanf(record[4], "%d", &number); err != nil {
+		return nil, fmt.Errorf("invalid number: %v", err)
+	}
+
+	return &Apuesta{
+		Agency:    agency,
+		FirstName: record[0],
+		LastName:  record[1],
+		Document:  record[2],
+		Birthdate: record[3],
+		Number:    number,
+	}, nil
 }
 
 // StartClientLoop Send messages to the client until some time threshold is met
@@ -238,137 +360,15 @@ func (c *Client) StartClientLoop() {
 		}
 	}()
 
-	// Buscar y cargar apuestas desde el archivo CSV
+	// Procesar CSV en streaming
 	csvFilename := fmt.Sprintf("/data/agency-%s.csv", c.config.ID)
 
-	apuestas, err := c.loadApuestasFromCSV(csvFilename)
-	if err != nil {
-		log.Errorf("action: load_csv | result: fail | client_id: %v | error: %v", c.config.ID, err)
+	log.Infof("action: start_streaming_processing | client_id: %v | filename: %s", c.config.ID, csvFilename)
+
+	if err := c.processCSVStreaming(csvFilename); err != nil {
+		log.Errorf("action: process_csv_streaming | result: fail | client_id: %v | error: %v", c.config.ID, err)
 		return
 	}
 
-	log.Infof("action: load_csv | result: success | client_id: %v | total_apuestas: %d", c.config.ID, len(apuestas))
-
-	// Si no hay apuestas, salir
-	if len(apuestas) == 0 {
-		log.Warningf("No bets found in CSV file for client %v", c.config.ID)
-		return
-	}
-
-	// Calcular el tamaño óptimo de batch basado en las apuestas reales
-	// Tomar una muestra para estimar
-	sampleSize := 10
-	if len(apuestas) < sampleSize {
-		sampleSize = len(apuestas)
-	}
-	optimalBatchSize := CalculateOptimalBatchSize(apuestas[:sampleSize])
-
-	// Usar el menor entre el configurado y el óptimo
-	effectiveBatchSize := c.config.BatchSize
-	if optimalBatchSize < effectiveBatchSize {
-		log.Infof("Adjusting batch size from %d to %d to fit within 8KB limit",
-			effectiveBatchSize, optimalBatchSize)
-		effectiveBatchSize = optimalBatchSize
-	}
-
-	// Dividir las apuestas en batches que cumplan con el límite de tamaño
-	allBatches := SplitBatchToFitSize(apuestas)
-
-	// Alternativamente, usar el tamaño de batch configurado si es seguro
-	if effectiveBatchSize > 0 {
-		// Reorganizar según el batch size configurado, pero verificando el tamaño
-		var safeBatches [][]Apuesta
-		for i := 0; i < len(apuestas); i += effectiveBatchSize {
-			end := i + effectiveBatchSize
-			if end > len(apuestas) {
-				end = len(apuestas)
-			}
-
-			batch := apuestas[i:end]
-
-			// Verificar que el batch no exceda el límite
-			testData := SerializeBatch(batch)
-			if len(testData) > MaxPayloadSize {
-				// Si excede, usar la división automática para este conjunto
-				subBatches := SplitBatchToFitSize(batch)
-				safeBatches = append(safeBatches, subBatches...)
-			} else {
-				safeBatches = append(safeBatches, batch)
-			}
-		}
-		allBatches = safeBatches
-	}
-
-	// Calcular número de batches a enviar
-	totalBatches := len(allBatches)
-	batchesToSend := totalBatches
-	if c.config.LoopAmount > 0 && c.config.LoopAmount < batchesToSend {
-		batchesToSend = c.config.LoopAmount
-	}
-
-	log.Infof("Will send %d batches (total available: %d)", batchesToSend, totalBatches)
-
-	batchesSent := 0
-
-	for batchIdx := 0; batchIdx < batchesToSend; batchIdx++ {
-		select {
-		case <-c.stop:
-			return
-		default:
-		}
-
-		batch := allBatches[batchIdx]
-
-		// Serializar el batch con verificación de tamaño
-		data, err := SerializeBatchSafe(batch)
-		if err != nil {
-			log.Errorf("action: batch_size_error | result: fail | client_id: %v | error: %v", c.config.ID, err)
-			// Intentar dividir el batch si es muy grande
-			subBatches := SplitBatchToFitSize(batch)
-			if len(subBatches) > 0 {
-				log.Infof("Batch too large, splitting into %d sub-batches", len(subBatches))
-				// Enviar el primer sub-batch
-				data = SerializeBatch(subBatches[0])
-				batch = subBatches[0]
-			} else {
-				continue
-			}
-		}
-
-		// Log del tamaño del paquete
-		packetSize := len(data) + HeaderSize
-		log.Debugf("Sending batch %d/%d: %d bets, packet size: %d bytes (max: %d)",
-			batchIdx+1, batchesToSend, len(batch), packetSize, MaxPacketSize)
-
-		// Enviar el batch
-		if err := c.sendMessage(data); err != nil {
-			log.Errorf("action: send_batch | result: fail | client_id: %v | error: %v", c.config.ID, err)
-			return
-		}
-
-		// Leer respuesta del servidor
-		response, err := c.readMessage()
-		if err != nil {
-			log.Errorf("action: receive_confirmation | result: fail | client_id: %v | error: %v", c.config.ID, err)
-			return
-		}
-
-		// Verificar respuesta
-		if response == "OK" {
-			log.Infof("action: batch_enviado | result: success | client_id: %v | batch_size: %d", c.config.ID, len(batch))
-		} else {
-			log.Errorf("action: batch_enviado | result: fail | client_id: %v | batch_size: %d | response: %v",
-				c.config.ID, len(batch), response)
-			return
-		}
-
-		batchesSent++
-
-		// Si todavía hay más batches para enviar
-		if batchesSent < batchesToSend {
-			time.Sleep(c.config.LoopPeriod)
-		}
-	}
-
-	log.Infof("action: loop_finished | result: success | client_id: %v | batches_sent: %d", c.config.ID, batchesSent)
+	log.Infof("action: streaming_processing_finished | result: success | client_id: %v", c.config.ID)
 }

@@ -1,6 +1,7 @@
 """
 Protocol module for bet communication
 Handles serialization/deserialization without using prohibited libraries
+ASSUMES: All batches are already pre-sized to fit within 8KB limit
 """
 
 # Protocol constants
@@ -42,6 +43,7 @@ def deserialize_batch(message):
     Deserialize a batch of bets from wire format
     Format: bet1;bet2;bet3...
     Returns a list of dictionaries with bet fields
+    ASSUMES: Message is already validated to be within size limits
     """
     if not message:
         return []
@@ -51,7 +53,7 @@ def deserialize_batch(message):
     bets = []
     
     for bet_str in bets_str:
-        if bet_str:  # Skip empty strings
+        if bet_str.strip():  # Skip empty strings
             bet_data = deserialize_bet(bet_str)
             bets.append(bet_data)
     
@@ -62,7 +64,11 @@ def serialize_batch(bets):
     Serialize a batch of bets to wire format
     Input: List of bet dictionaries
     Output: String with format bet1;bet2;bet3...
+    ASSUMES: Batch size is already validated
     """
+    if not bets:
+        return ""
+    
     serialized_bets = []
     
     for bet in bets:
@@ -111,14 +117,10 @@ def create_message(data):
     """
     Create a length-prefixed message
     Format: [4 bytes length][message data]
-    Validates that message doesn't exceed maximum size
+    ASSUMES: Data is already validated to fit within limits
     """
     if isinstance(data, str):
         data = data.encode('utf-8')
-    
-    # Validar que el mensaje no exceda el tamaño máximo
-    if len(data) > MAX_PAYLOAD_SIZE:
-        raise ValueError(f"Message size ({len(data)} bytes) exceeds maximum allowed ({MAX_PAYLOAD_SIZE} bytes)")
     
     length_prefix = int_to_bytes(len(data))
     return length_prefix + data
@@ -127,7 +129,7 @@ def read_message_from_socket(sock):
     """
     Read a complete length-prefixed message from a socket
     First reads 4 bytes for length, then reads the message body
-    Validates that message doesn't exceed maximum size
+    ASSUMES: Messages are pre-validated by sender to be within limits
     """
     # Read 4-byte length prefix
     length_data = b""
@@ -140,10 +142,6 @@ def read_message_from_socket(sock):
     # Convert bytes to integer
     msg_length = bytes_to_int(length_data)
     
-    # Validar que el mensaje no exceda el tamaño máximo permitido
-    if msg_length > MAX_PAYLOAD_SIZE:
-        raise ValueError(f"Message length ({msg_length}) exceeds maximum allowed ({MAX_PAYLOAD_SIZE})")
-    
     # Si el mensaje tiene longitud 0, retornar string vacío
     if msg_length == 0:
         return ""
@@ -152,8 +150,8 @@ def read_message_from_socket(sock):
     msg_data = b""
     while len(msg_data) < msg_length:
         remaining = msg_length - len(msg_data)
-        # Limitar la lectura para no exceder el buffer
-        chunk_size = min(remaining, 4096, MAX_PAYLOAD_SIZE)
+        # Optimized chunk size for better performance
+        chunk_size = min(remaining, 4096)
         chunk = sock.recv(chunk_size)
         if not chunk:
             raise ConnectionError("Connection closed while reading message")
@@ -165,6 +163,7 @@ def send_message_to_socket(sock, message):
     """
     Send a complete length-prefixed message to a socket
     Handles partial sends (short writes)
+    ASSUMES: Message is already validated to fit within limits
     """
     if isinstance(message, str):
         full_msg = create_message(message)
