@@ -99,12 +99,10 @@ func main() {
 	v, err := InitConfig()
 	if err != nil {
 		log.Criticalf("%s", err)
-		os.Exit(1)
 	}
 
 	if err := InitLogger(v.GetString("log.level")); err != nil {
 		log.Criticalf("%s", err)
-		os.Exit(1)
 	}
 
 	PrintConfig(v)
@@ -140,6 +138,4 @@ func main() {
 		client.Shutdown()
 		log.Infof("action: exitTERM | result: success | client_id: %v | reason: sigterm", clientConfig.ID)
 	}
-
-	os.Exit(0)
 }
