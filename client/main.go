@@ -118,8 +118,8 @@ func main() {
 	signal.Notify(stopChan, syscall.SIGTERM)
 	go func() {
 		<-stopChan
-		log.Infof("action: exit | result: success | client_id: %v", clientConfig.ID)
 		client.Shutdown()
+		log.Infof("action: exit | result: success | client_id: %v", clientConfig.ID)
 		os.Exit(0)
 	}()
 
