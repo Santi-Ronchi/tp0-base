@@ -140,6 +140,7 @@ type StreamingBatchProcessor struct {
 	currentBatch []Apuesta
 	currentSize  int
 	agency       int
+	batchesSent  int
 }
 
 // NewStreamingBatchProcessor crea un nuevo procesador de batches streaming
@@ -156,34 +157,44 @@ func (c *Client) NewStreamingBatchProcessor() *StreamingBatchProcessor {
 		currentBatch: make([]Apuesta, 0),
 		currentSize:  0,
 		agency:       agency,
+		batchesSent:  0,
 	}
 }
 
 // AddApuesta añade una apuesta al batch actual, enviándolo si se alcanza el límite
 func (sbp *StreamingBatchProcessor) AddApuesta(apuesta Apuesta) error {
-	// Estimar el tamaño de esta apuesta
-	apuestaSize := EstimateApuestaSize(apuesta)
-
-	// Considerar el separador si no es la primera apuesta
-	separatorSize := 0
-	if len(sbp.currentBatch) > 0 {
-		separatorSize = len(BatchSeparator)
-	}
-
-	// Si agregar esta apuesta excedería el límite, enviar el batch actual
-	if sbp.currentSize+apuestaSize+separatorSize > MaxPayloadSize {
+	// Si tenemos un BatchSize configurado, usarlo como límite primario
+	if sbp.client.config.BatchSize > 0 && len(sbp.currentBatch) >= sbp.client.config.BatchSize {
+		if err := sbp.sendCurrentBatch(); err != nil {
+			return err
+		}
+	} else {
+		// Fallback a límite de tamaño si no hay BatchSize configurado
+		apuestaSize := EstimateApuestaSize(apuesta)
+		separatorSize := 0
 		if len(sbp.currentBatch) > 0 {
-			if err := sbp.sendCurrentBatch(); err != nil {
-				return err
+			separatorSize = len(BatchSeparator)
+		}
+
+		// Si agregar esta apuesta excedería el límite, enviar el batch actual
+		if sbp.currentSize+apuestaSize+separatorSize > MaxPayloadSize {
+			if len(sbp.currentBatch) > 0 {
+				if err := sbp.sendCurrentBatch(); err != nil {
+					return err
+				}
 			}
 		}
 	}
 
 	// Agregar la apuesta al batch actual
 	sbp.currentBatch = append(sbp.currentBatch, apuesta)
-	sbp.currentSize += apuestaSize
-	if len(sbp.currentBatch) > 1 {
-		sbp.currentSize += len(BatchSeparator)
+	if sbp.client.config.BatchSize <= 0 {
+		// Solo calcular tamaño si no usamos BatchSize fijo
+		apuestaSize := EstimateApuestaSize(apuesta)
+		sbp.currentSize += apuestaSize
+		if len(sbp.currentBatch) > 1 {
+			sbp.currentSize += len(BatchSeparator)
+		}
 	}
 
 	return nil
@@ -193,6 +204,11 @@ func (sbp *StreamingBatchProcessor) AddApuesta(apuesta Apuesta) error {
 func (sbp *StreamingBatchProcessor) sendCurrentBatch() error {
 	if len(sbp.currentBatch) == 0 {
 		return nil
+	}
+
+	// Verificar si hemos alcanzado el límite de batches
+	if sbp.client.config.LoopAmount > 0 && sbp.batchesSent >= sbp.client.config.LoopAmount {
+		return fmt.Errorf("batch limit reached")
 	}
 
 	// Serializar el batch
@@ -214,8 +230,14 @@ func (sbp *StreamingBatchProcessor) sendCurrentBatch() error {
 
 	// Verificar respuesta
 	if response == "OK" {
+		sbp.batchesSent++
 		log.Infof("action: batch_enviado | result: success | client_id: %v | batch_size: %d",
 			sbp.client.config.ID, len(sbp.currentBatch))
+
+		// Aplicar delay entre batches si está configurado
+		if sbp.client.config.LoopPeriod > 0 {
+			time.Sleep(sbp.client.config.LoopPeriod)
+		}
 	} else {
 		return fmt.Errorf("server responded with: %v", response)
 	}
@@ -244,7 +266,6 @@ func (c *Client) processCSVStreaming(filename string) error {
 	processor := c.NewStreamingBatchProcessor()
 
 	lineNumber := 0
-	batchesSent := 0
 
 	// Leer primera línea para verificar si es header
 	firstLine, err := reader.Read()
@@ -269,6 +290,10 @@ func (c *Client) processCSVStreaming(filename string) error {
 	if !isHeader && len(firstLine) == 5 {
 		if apuesta, err := c.parseCSVRecord(firstLine, processor.agency); err == nil {
 			if err := processor.AddApuesta(*apuesta); err != nil {
+				if err.Error() == "batch limit reached" {
+					log.Infof("Batch limit reached, stopping processing")
+					return nil
+				}
 				return err
 			}
 		} else {
@@ -298,30 +323,27 @@ func (c *Client) processCSVStreaming(filename string) error {
 		// Procesar el record
 		if apuesta, err := c.parseCSVRecord(record, processor.agency); err == nil {
 			if err := processor.AddApuesta(*apuesta); err != nil {
+				if err.Error() == "batch limit reached" {
+					log.Infof("Batch limit reached, stopping processing")
+					break
+				}
 				return fmt.Errorf("error processing record (line %d): %v", lineNumber, err)
 			}
 		} else {
 			log.Warningf("Error parsing record (line %d): %v", lineNumber, err)
 		}
-
-		// Verificar si hemos alcanzado el límite de batches
-		if c.config.LoopAmount > 0 && batchesSent >= c.config.LoopAmount {
-			break
-		}
-
-		// Sleep si es necesario entre registros para controlar la velocidad
-		if c.config.LoopPeriod > 0 && lineNumber%100 == 0 {
-			time.Sleep(c.config.LoopPeriod / 100) // Pequeño delay cada 100 registros
-		}
 	}
 
 	// Enviar cualquier batch restante
 	if err := processor.FlushBatch(); err != nil {
-		return fmt.Errorf("error flushing final batch: %v", err)
+		// Si es porque ya alcanzamos el límite, no es un error
+		if err.Error() != "batch limit reached" {
+			return fmt.Errorf("error flushing final batch: %v", err)
+		}
 	}
 
-	log.Infof("action: csv_processed | result: success | client_id: %v | lines_processed: %d",
-		c.config.ID, lineNumber)
+	log.Infof("action: loop_finished | result: success | client_id: %v | batches_sent: %d",
+		c.config.ID, processor.batchesSent)
 
 	return nil
 }
@@ -363,12 +385,8 @@ func (c *Client) StartClientLoop() {
 	// Procesar CSV en streaming
 	csvFilename := fmt.Sprintf("/data/agency-%s.csv", c.config.ID)
 
-	log.Infof("action: start_streaming_processing | client_id: %v | filename: %s", c.config.ID, csvFilename)
-
 	if err := c.processCSVStreaming(csvFilename); err != nil {
 		log.Errorf("action: process_csv_streaming | result: fail | client_id: %v | error: %v", c.config.ID, err)
 		return
 	}
-
-	log.Infof("action: streaming_processing_finished | result: success | client_id: %v", c.config.ID)
 }
