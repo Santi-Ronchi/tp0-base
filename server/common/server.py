@@ -208,8 +208,10 @@ class Server:
                 return self.__get_agency_winners(agency_id)
             else:
                 # Sorteo no realizado, agregar cliente a lista de espera
-                self.waiting_clients.append((client_sock, agency_id))
-                logging.info(f"Agency {agency_id} waiting for lottery results")
+                # Pero primero verificar que no esté ya en la lista
+                if not any(sock == client_sock for sock, _ in self.waiting_clients):
+                    self.waiting_clients.append((client_sock, agency_id))
+                    logging.info(f"Agency {agency_id} waiting for lottery results")
                 return None  # Indicar que debe esperar
 
     def __get_agency_winners(self, agency_id):
