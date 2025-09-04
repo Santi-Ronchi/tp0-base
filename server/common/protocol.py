@@ -53,7 +53,7 @@ def deserialize_batch(message):
     bets = []
     
     for bet_str in bets_str:
-        if bet_str.strip():  # Skip empty strings
+        if bet_str.strip(): 
             bet_data = deserialize_bet(bet_str)
             bets.append(bet_data)
     
@@ -141,8 +141,7 @@ def read_message_from_socket(sock):
     
     # Convert bytes to integer
     msg_length = bytes_to_int(length_data)
-    
-    # Si el mensaje tiene longitud 0, retornar string vacío
+
     if msg_length == 0:
         return ""
     

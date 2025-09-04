@@ -18,7 +18,7 @@ class Server:
         self.running = True
         signal.signal(signal.SIGTERM, self.graceful_shutdown)
         
-        # Control de sorteo
+        # Concurrency control
         self.lottery_lock = threading.Lock()
         self.agencies_finished = set()  # Agencias que terminaron de enviar
         self.lottery_done = False  # Indica si se realizó el sorteo
@@ -43,7 +43,7 @@ class Server:
             try:
                 client_sock = self.__accept_new_connection()
                 if client_sock:
-                    # Manejar cada cliente en un thread separado
+                    # manage each client connection in a separate thread
                     client_thread = threading.Thread(
                         target=self.__handle_client_connection,
                         args=(client_sock,)
@@ -51,7 +51,7 @@ class Server:
                     client_thread.daemon = True
                     client_thread.start()
             except OSError:
-                # Socket principal cerrado
+                # main socket was closed, likely due to SIGTERM
                 if not self.running:
                     break
                 else:
@@ -67,14 +67,13 @@ class Server:
         """
         agency_id = None
         try:
-            while True:  # Mantener la conexión abierta para múltiples mensajes
+            while True:  # maintain connection until client closes it
                 try:
                     # Read complete message using protocol module
                     msg = read_message_from_socket(client_sock)
                     
-                    # Determinar tipo de mensaje
                     if msg.startswith("BET:"):
-                        # Es un batch de apuestas
+                        # bet batch received
                         batch_data = msg[4:]  # Remover prefijo "BET:"
                         agency_id = self.__process_bets_batch(batch_data)
                         
@@ -82,25 +81,23 @@ class Server:
                         send_message_to_socket(client_sock, "OK")
                         
                     elif msg == "FINISHED":
-                        # Cliente terminó de enviar apuestas
+                        # Client notifies it finished sending bets
                         if agency_id is not None:
                             self.__handle_finished_notification(agency_id)
                         send_message_to_socket(client_sock, "OK")
                         
                     elif msg == "WINNERS":
-                        # Cliente consulta ganadores
+                        # Client requests winners for its agency
                         winners = self.__handle_winners_query(agency_id, client_sock)
                         if winners is not None:
-                            # Enviar ganadores inmediatamente si están listos
+                            # Send winners immediately if available
                             send_message_to_socket(client_sock, winners)
-                        # Si winners es None, el cliente será notificado más tarde
+                        # if winners is None, the client was added to waiting list
                         
                 except ConnectionError as e:
-                    # Cliente cerró la conexión, es normal
                     logging.debug(f"Client closed connection: {e}")
                     break
                 except Exception as e:
-                    # Error procesando el mensaje actual
                     logging.error(f"action: message_processing | result: fail | error: {e}")
                     try:
                         send_message_to_socket(client_sock, "ERROR")
@@ -109,7 +106,7 @@ class Server:
                     break
                     
         finally:
-            # Limpiar cliente de la lista de espera si está ahí
+            # Clean up list of waiting clients if needed
             with self.lottery_lock:
                 self.waiting_clients = [(sock, aid) for sock, aid in self.waiting_clients 
                                        if sock != client_sock]
@@ -123,7 +120,7 @@ class Server:
         # Parse batch message using protocol module
         bets_data = deserialize_batch(batch_data)
         
-        # Si el batch está vacío, responder OK pero no procesar
+        # if no bets, log and return None
         if len(bets_data) == 0:
             logging.info(f"action: apuesta_recibida | result: success | cantidad: 0")
             return None
@@ -160,7 +157,7 @@ class Server:
             self.agencies_finished.add(str(agency_id))
             logging.info(f"Agency {agency_id} finished sending bets. Total finished: {len(self.agencies_finished)}/{self.total_agencies}")
             
-            # Verificar si todas las agencias terminaron
+            # Verify if all agencies have finished
             if len(self.agencies_finished) >= self.total_agencies and not self.lottery_done:
                 self.__perform_lottery()
 
@@ -172,10 +169,10 @@ class Server:
         logging.info("action: sorteo | result: success")
         self.lottery_done = True
         
-        # Cargar todas las apuestas
+        # load all bets
         all_bets = list(load_bets())
         
-        # Agrupar ganadores por agencia
+        # group winners by agency
         self.winners_by_agency = {}
         for bet in all_bets:
             if has_won(bet):
@@ -186,7 +183,7 @@ class Server:
         
         logging.info(f"Lottery complete. Winners by agency: {self.winners_by_agency}")
         
-        # Notificar a todos los clientes en espera
+        # Notify all waiting clients
         for client_sock, agency_id in self.waiting_clients:
             try:
                 winners = self.__get_agency_winners(agency_id)
@@ -194,7 +191,7 @@ class Server:
             except Exception as e:
                 logging.error(f"Error notifying waiting client: {e}")
         
-        # Limpiar lista de clientes en espera
+        # clean up waiting clients list
         self.waiting_clients = []
 
     def __handle_winners_query(self, agency_id, client_sock):
@@ -204,15 +201,15 @@ class Server:
         """
         with self.lottery_lock:
             if self.lottery_done:
-                # Sorteo ya realizado, enviar ganadores inmediatamente
+                # lottery done, return winners immediately
                 return self.__get_agency_winners(agency_id)
             else:
-                # Sorteo no realizado, agregar cliente a lista de espera
-                # Pero primero verificar que no esté ya en la lista
+                # Lottery not done yet, add to waiting list
+                # first check if already in waiting list
                 if not any(sock == client_sock for sock, _ in self.waiting_clients):
                     self.waiting_clients.append((client_sock, agency_id))
                     logging.info(f"Agency {agency_id} waiting for lottery results")
-                return None  # Indicar que debe esperar
+                return None  # tell caller to wait
 
     def __get_agency_winners(self, agency_id):
         """

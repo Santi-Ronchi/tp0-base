@@ -135,7 +135,7 @@ func (c *Client) readMessage() (string, error) {
 	return string(msgBuf), nil
 }
 
-// StreamingBatchProcessor maneja el procesamiento de CSV en streaming
+// StreamingBatchProcessor manages the processing of streaming CSV files
 type StreamingBatchProcessor struct {
 	client       *Client
 	currentBatch []Apuesta
@@ -144,9 +144,9 @@ type StreamingBatchProcessor struct {
 	batchesSent  int
 }
 
-// NewStreamingBatchProcessor crea un nuevo procesador de batches streaming
+// NewStreamingBatchProcessor creates a new streaming batch processor
 func (c *Client) NewStreamingBatchProcessor() *StreamingBatchProcessor {
-	// Convertir el ID del cliente a int para usarlo como agency
+	// Converts Client ID to int to be usable as agency
 	var agency int
 	if _, err := fmt.Sscanf(c.config.ID, "%d", &agency); err != nil {
 		log.Warningf("Client ID is not numeric (%s), using agency=1", c.config.ID)
@@ -162,22 +162,22 @@ func (c *Client) NewStreamingBatchProcessor() *StreamingBatchProcessor {
 	}
 }
 
-// AddApuesta añade una apuesta al batch actual, enviándolo si se alcanza el límite
+// AddApuesta adds bet to batch, sending it if the limit is reached
 func (sbp *StreamingBatchProcessor) AddApuesta(apuesta Apuesta) error {
-	// Si tenemos un BatchSize configurado, usarlo como límite primario
+	// If there's a batchSize limit set, use that as the limit
 	if sbp.client.config.BatchSize > 0 && len(sbp.currentBatch) >= sbp.client.config.BatchSize {
 		if err := sbp.sendCurrentBatch(); err != nil {
 			return err
 		}
 	} else {
-		// Fallback a límite de tamaño si no hay BatchSize configurado
+		// Fallback to size limit if no BatchSize set
 		apuestaSize := EstimateApuestaSize(apuesta)
 		separatorSize := 0
 		if len(sbp.currentBatch) > 0 {
 			separatorSize = len(BatchSeparator)
 		}
 
-		// Si agregar esta apuesta excedería el límite, enviar el batch actual
+		// If adding this bet sends the size over the limit, send instead
 		if sbp.currentSize+apuestaSize+separatorSize > MaxPayloadSize {
 			if len(sbp.currentBatch) > 0 {
 				if err := sbp.sendCurrentBatch(); err != nil {
@@ -187,10 +187,10 @@ func (sbp *StreamingBatchProcessor) AddApuesta(apuesta Apuesta) error {
 		}
 	}
 
-	// Agregar la apuesta al batch actual
+	// Add bet to batch
 	sbp.currentBatch = append(sbp.currentBatch, apuesta)
 	if sbp.client.config.BatchSize <= 0 {
-		// Solo calcular tamaño si no usamos BatchSize fijo
+		// Only calculate size if we use a fixed BatchSize
 		apuestaSize := EstimateApuestaSize(apuesta)
 		sbp.currentSize += apuestaSize
 		if len(sbp.currentBatch) > 1 {
@@ -201,42 +201,42 @@ func (sbp *StreamingBatchProcessor) AddApuesta(apuesta Apuesta) error {
 	return nil
 }
 
-// sendCurrentBatch envía el batch actual y lo resetea
+// sendCurrentBatch sends current batch and resets
 func (sbp *StreamingBatchProcessor) sendCurrentBatch() error {
 	if len(sbp.currentBatch) == 0 {
 		return nil
 	}
 
-	// Verificar si hemos alcanzado el límite de batches
+	// Verify batch limit
 	if sbp.client.config.LoopAmount > 0 && sbp.batchesSent >= sbp.client.config.LoopAmount {
 		return fmt.Errorf("batch limit reached")
 	}
 
-	// Serializar el batch
+	// Serialize batch
 	data := SerializeBatch(sbp.currentBatch)
 
 	log.Debugf("Sending batch: %d bets, packet size: %d bytes (max: %d)",
 		len(sbp.currentBatch), len(data)+HeaderSize, MaxPacketSize)
 
-	// Enviar el batch con el prefijo "BET:"
+	// Send batch with prefix "BET:"
 	message := append([]byte("BET:"), data...)
 	if err := sbp.client.sendMessage(message); err != nil {
 		return fmt.Errorf("error sending batch: %v", err)
 	}
 
-	// Leer respuesta del servidor
+	// Read server response
 	response, err := sbp.client.readMessage()
 	if err != nil {
 		return fmt.Errorf("error receiving confirmation: %v", err)
 	}
 
-	// Verificar respuesta
+	// Verify answer is OKv
 	if response == "OK" {
 		sbp.batchesSent++
 		log.Infof("action: batch_enviado | result: success | client_id: %v | batch_size: %d",
 			sbp.client.config.ID, len(sbp.currentBatch))
 
-		// Aplicar delay entre batches si está configurado
+		// If delay is set, use it between batches.
 		if sbp.client.config.LoopPeriod > 0 {
 			time.Sleep(sbp.client.config.LoopPeriod)
 		}
@@ -244,28 +244,26 @@ func (sbp *StreamingBatchProcessor) sendCurrentBatch() error {
 		return fmt.Errorf("server responded with: %v", response)
 	}
 
-	// Resetear el batch actual
+	// reset currrent batch
 	sbp.currentBatch = sbp.currentBatch[:0] // Reutilizar el slice subyacente
 	sbp.currentSize = 0
 
 	return nil
 }
 
-// FlushBatch envía cualquier batch restante
+// FlushBatch sends remaining batch
 func (sbp *StreamingBatchProcessor) FlushBatch() error {
 	return sbp.sendCurrentBatch()
 }
 
-// notifyFinished notifica al servidor que terminó de enviar apuestas
+// notifyFinished to Server that bet sending is over
 func (c *Client) notifyFinished() error {
 	log.Infof("action: notify_finished | result: in_progress | client_id: %v", c.config.ID)
 
-	// Enviar mensaje de finalización
 	if err := c.sendMessage([]byte("FINISHED")); err != nil {
 		return fmt.Errorf("error sending finished notification: %v", err)
 	}
 
-	// Leer confirmación
 	response, err := c.readMessage()
 	if err != nil {
 		return fmt.Errorf("error receiving finished confirmation: %v", err)
@@ -279,22 +277,22 @@ func (c *Client) notifyFinished() error {
 	return nil
 }
 
-// queryWinners consulta los ganadores de la agencia
+// queryWinners asks the server for the list of winners
 func (c *Client) queryWinners() error {
 	log.Infof("action: query_winners | result: in_progress | client_id: %v", c.config.ID)
 
-	// Enviar consulta de ganadores
+	// Send query message
 	if err := c.sendMessage([]byte("WINNERS")); err != nil {
 		return fmt.Errorf("error sending winners query: %v", err)
 	}
 
-	// Leer respuesta con los ganadores
+	// read winners
 	response, err := c.readMessage()
 	if err != nil {
 		return fmt.Errorf("error receiving winners: %v", err)
 	}
 
-	// Parsear la lista de ganadores (viene como lista separada por comas)
+	// parse winner list
 	winners := []string{}
 	if response != "" && response != "NONE" {
 		winners = strings.Split(response, ",")
@@ -302,15 +300,10 @@ func (c *Client) queryWinners() error {
 
 	log.Infof("action: consulta_ganadores | result: success | cant_ganadores: %d", len(winners))
 
-	// Log adicional con los DNI de los ganadores si los hay
-	if len(winners) > 0 {
-		log.Debugf("Winners for agency %v: %v", c.config.ID, winners)
-	}
-
 	return nil
 }
 
-// processCSVStreaming procesa el CSV línea por línea sin cargar todo en memoria
+// processCSVStreaming processes the CSV line per line to avoid loading all to memory
 func (c *Client) processCSVStreaming(filename string) error {
 	file, err := os.Open(filename)
 	if err != nil {
@@ -323,7 +316,7 @@ func (c *Client) processCSVStreaming(filename string) error {
 
 	lineNumber := 0
 
-	// Leer primera línea para verificar si es header
+	// read first line to check for header
 	firstLine, err := reader.Read()
 	if err != nil {
 		if err == io.EOF {
@@ -334,7 +327,6 @@ func (c *Client) processCSVStreaming(filename string) error {
 	}
 	lineNumber++
 
-	// Verificar si es header
 	isHeader := false
 	if len(firstLine) == 5 {
 		if firstLine[0] == "nombre" || firstLine[0] == "Nombre" || firstLine[0] == "NOMBRE" {
@@ -342,7 +334,7 @@ func (c *Client) processCSVStreaming(filename string) error {
 		}
 	}
 
-	// Si no es header, procesar la primera línea
+	// If not header, process first line as record
 	if !isHeader && len(firstLine) == 5 {
 		if apuesta, err := c.parseCSVRecord(firstLine, processor.agency); err == nil {
 			if err := processor.AddApuesta(*apuesta); err != nil {
@@ -357,7 +349,7 @@ func (c *Client) processCSVStreaming(filename string) error {
 		}
 	}
 
-	// Procesar el resto del archivo línea por línea
+	// process remaining lines
 	for {
 		select {
 		case <-c.stop:
@@ -376,7 +368,7 @@ func (c *Client) processCSVStreaming(filename string) error {
 		}
 		lineNumber++
 
-		// Procesar el record
+		// Process record
 		if apuesta, err := c.parseCSVRecord(record, processor.agency); err == nil {
 			if err := processor.AddApuesta(*apuesta); err != nil {
 				if err.Error() == "batch limit reached" {
@@ -390,9 +382,8 @@ func (c *Client) processCSVStreaming(filename string) error {
 		}
 	}
 
-	// Enviar cualquier batch restante
+	// Send remaining bets in final batch
 	if err := processor.FlushBatch(); err != nil {
-		// Si es porque ya alcanzamos el límite, no es un error
 		if err.Error() != "batch limit reached" {
 			return fmt.Errorf("error flushing final batch: %v", err)
 		}
@@ -404,7 +395,7 @@ func (c *Client) processCSVStreaming(filename string) error {
 	return nil
 }
 
-// parseCSVRecord convierte un record de CSV a una estructura Apuesta
+// parseCSVRecord converts a CSV record to an Apuesta struct
 func (c *Client) parseCSVRecord(record []string, agency int) (*Apuesta, error) {
 	if len(record) != 5 {
 		return nil, fmt.Errorf("invalid record format: expected 5 fields, got %d", len(record))
@@ -438,7 +429,7 @@ func (c *Client) StartClientLoop() {
 		}
 	}()
 
-	// Procesar CSV en streaming
+	// process CSV file
 	csvFilename := fmt.Sprintf("/data/agency-%s.csv", c.config.ID)
 
 	if err := c.processCSVStreaming(csvFilename); err != nil {
@@ -446,13 +437,13 @@ func (c *Client) StartClientLoop() {
 		return
 	}
 
-	// Notificar al servidor que terminamos de enviar apuestas
+	// Notify server that sending is finished
 	if err := c.notifyFinished(); err != nil {
 		log.Errorf("action: notify_finished | result: fail | client_id: %v | error: %v", c.config.ID, err)
 		return
 	}
 
-	// Consultar ganadores
+	// Query winners
 	if err := c.queryWinners(); err != nil {
 		log.Errorf("action: query_winners | result: fail | client_id: %v | error: %v", c.config.ID, err)
 		return

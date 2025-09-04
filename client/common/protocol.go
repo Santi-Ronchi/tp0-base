@@ -36,15 +36,15 @@ func SerializeApuesta(a Apuesta) []byte {
 	return []byte(msg)
 }
 
-// EstimateApuestaSize estima el tamaño en bytes de una apuesta serializada
+// EstimateApuestaSize estimates the size of a serialized Apuesta
 func EstimateApuestaSize(a Apuesta) int {
 	serialized := SerializeApuesta(a)
 	return len(serialized)
 }
 
-// SerializeBatch convierte un batch de apuestas al formato wire
+// SerializeBatch converts a slice of Apuestas to wire format using custom protocol
 // Format: apuesta1;apuesta2;apuesta3...
-// ASUME: El batch ya está dimensionado para caber dentro del límite de 8KB
+// ASUMES: The batch fits within MaxPayloadSize
 func SerializeBatch(apuestas []Apuesta) []byte {
 	if len(apuestas) == 0 {
 		return []byte{}
@@ -104,22 +104,20 @@ func DeserializeApuesta(data []byte) (*Apuesta, error) {
 	}, nil
 }
 
-// DeserializeBatch convierte el formato wire a un slice de Apuestas
+// DeserializeBatch converts wire format batch to slice of Apuesta structs
 func DeserializeBatch(data []byte) ([]*Apuesta, error) {
 	str := string(data)
 
-	// Si está vacío, retornar slice vacío
 	if len(str) == 0 {
 		return []*Apuesta{}, nil
 	}
 
-	// Dividir por el separador de batch
+	// divide batch into individual bets
 	betsStr := strings.Split(str, BatchSeparator)
 	apuestas := make([]*Apuesta, 0, len(betsStr))
 
 	for _, betStr := range betsStr {
 		if betStr == "" {
-			continue // Saltar strings vacíos
 		}
 		apuesta, err := DeserializeApuesta([]byte(betStr))
 		if err != nil {
@@ -133,7 +131,7 @@ func DeserializeBatch(data []byte) ([]*Apuesta, error) {
 
 // CreateMessage creates a length-prefixed message
 // Format: [4 bytes length][message data]
-// ASUME: Los datos ya están validados para caber en el límite
+// ASUMES: The message fits within MaxPayloadSize
 func CreateMessage(data []byte) ([]byte, error) {
 	var buf bytes.Buffer
 
@@ -143,7 +141,6 @@ func CreateMessage(data []byte) ([]byte, error) {
 		return nil, err
 	}
 
-	// Write the actual message
 	buf.Write(data)
 
 	return buf.Bytes(), nil

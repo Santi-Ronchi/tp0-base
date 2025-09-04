@@ -117,20 +117,22 @@ func main() {
 
 	client := common.NewClient(clientConfig)
 
-	// Canal para señalar cuando el cliente termine su trabajo
+	// Channel to notify when the client loop is done
 	done := make(chan bool)
 
-	// Manejo de SIGTERM para shutdown graceful
+	// manage SIGTERM for graceful shutdown
 	stopChan := make(chan os.Signal, 1)
 	signal.Notify(stopChan, syscall.SIGTERM)
 
-	// Ejecutar el cliente en una goroutine
+	// run client loop in a separate goroutine
+	// this way we can listen for SIGTERM while the client is running
+	// and shutdown gracefully
 	go func() {
 		client.StartClientLoop()
 		done <- true
 	}()
 
-	// Esperar a que termine el cliente O reciba SIGTERM
+	// Wait for the client loop to finish or a SIGTERM
 	select {
 	case <-done:
 		log.Infof("action: exitDone | result: success | client_id: %v | reason: finished", clientConfig.ID)
