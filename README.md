@@ -178,3 +178,162 @@ Se espera que se redacte una sección del README en donde se indique cómo ejecu
 Se proveen [pruebas automáticas](https://github.com/7574-sistemas-distribuidos/tp0-tests) de caja negra. Se exige que la resolución de los ejercicios pase tales pruebas, o en su defecto que las discrepancias sean justificadas y discutidas con los docentes antes del día de la entrega. El incumplimiento de las pruebas es condición de desaprobación, pero su cumplimiento no es suficiente para la aprobación. Respetar las entradas de log planteadas en los ejercicios, pues son las que se chequean en cada uno de los tests.
 
 La corrección personal tendrá en cuenta la calidad del código entregado y casos de error posibles, se manifiesten o no durante la ejecución del trabajo práctico. Se pide a los alumnos leer atentamente y **tener en cuenta** los criterios de corrección informados  [en el campus](https://campusgrado.fi.uba.ar/mod/page/view.php?id=73393).
+
+## Resolución:
+
+
+### Ejercicio N°1:
+
+Se crearon 2 archivos el `generar-compose.sh` (bash) y su correspondiente `mi-generador.py` (python) para escribir el archivo docker-compose-dev.yaml
+
+Se utiliza de la manera `./generar-compose.sh <nombre_del_archivo_de_salida> <cantidad_de_clientes>` en nuestro caso el nombre de archivo de salida siempre será `docker-compose-dev.yaml`
+
+Con esto obtendremos un servidor central al cual se conectaran la cantidad de clientes indicada (minimo 1, y en incrementos de numeros enteros) cuando ejecutemos la linea indicada anteriormente.
+
+el script mi-generador.py se encargará de crear todas las configuraciones para que se cumpla lo pedido, y todos los clientes serán virtualmente iguales a excepcion obvio de su ID.
+
+
+### Ejercicio N°2:
+
+Al generador del ejercicio 1 ahora se le añaden volumenes en clientes y servidor para poder persistir las imagenes de docker y no reconstruirlas cada vez.
+
+Para los tests de la catedra se tuvo que retirar tambien la configuración de DEBUG del generador ya que algunas pruebas corren en modo INFO y otras en DEBUG.
+
+
+### Ejercicio N°3:
+Crear un script de bash `validar-echo-server.sh` que permita verificar el correcto funcionamiento del servidor utilizando el comando `netcat` para interactuar con el mismo. Dado que el servidor es un echo server, se debe enviar un mensaje al servidor y esperar recibir el mismo mensaje enviado.
+
+En caso de que la validación sea exitosa imprimir: `action: test_echo_server | result: success`, de lo contrario imprimir:`action: test_echo_server | result: fail`.
+
+El script deberá ubicarse en la raíz del proyecto. Netcat no debe ser instalado en la máquina _host_ y no se pueden exponer puertos del servidor para realizar la comunicación (hint: `docker network`). `
+
+## Resolución
+
+### Ejercicio N°3:
+
+Se creó el sh `validar-echo-server.sh` para testear el eco del server con netcat y se le dio permisos de ejecución. En este caso se optó por usar BusyBox ya que contiene netcat y facilita la implementación.
+
+para lanzarlo simplemente hacer `./validar-echo-server.sh` y revisar el outcome:
+
+- **action: test_echo_server | result: success** codigo OK
+
+- **action: test_echo_server | result: fail** codigo NOOK
+
+
+### Ejercicio N°4:
+
+En este ejercicio se agregaron handlers de SIGTERM para ambos cliente y servidor. De esta manera podemos apagarlos de manera graceful con esta signal sin que se llegue a un panic o se quede colgado abierto.
+
+#### Ejemplo:
+
+```
+client1  | 2025-09-04 03:49:13 INFO     action: receive_message | result: success | client_id: 1 | msg: [CLIENT 1] Message N°4
+server   | 2025-09-04 03:49:13 INFO     action: receive_message | result: success | ip: 172.25.125.3 | msg: [CLIENT 1] Message N°4
+server   | 2025-09-04 03:49:13 INFO     Client socket closed
+server   | 2025-09-04 03:49:13 INFO     action: accept_connections | result: in_progress
+server   | 2025-09-04 03:49:13 INFO     SIGTERM received, shutting down server gracefully
+server   | 2025-09-04 03:49:13 INFO     Server socket closed
+server   | 2025-09-04 03:49:13 INFO     Server loop exited gracefully
+server exited with code 0
+client1  | 2025-09-04 03:49:21 INFO     action: exit | result: success | client_id: 1
+client1  | 2025-09-04 03:49:23 CRITI     action: connect | result: fail | client_id: 1 | error: dial tcp: lookup server on 127.0.0.11:53: server misbehaving
+client1 exited with code 0
+```
+
+Vemos como luego de hacer un `docker kill --signal=SIGTERM server` se cierra el servidor, y luego cerramos de la misma manera el client1.
+
+
+PD: inicialmente manejaba estos exits con os.Exit(0) para cerrarlos, lo cual estaba mal porque no dejaban que el programa realmente termine su ciclo y cierre apropiadamente.
+
+
+### Ejercicio N°5:
+
+Para este ejercicio primero se implemento un protocolo de serialización/deserealización del tipo protocolo de longitud prefijada (length-prefixed protocol). Los primeros 4 bytes contienen la longitud del mensaje (big-endian) y los siguientes bytes contienen los datos serializados.
+
+Los datos se envían de la forma [largo]agency|firstName|lastName|document|birthdate|number. se utiliza el caracter | para delimitar campos con un formato de texto plano.
+
+las unicas librerías utilizadas son en Go, `bytes` y `encoding/binary`
+
+ejemplo con los datos AGENCIA=1, NOMBRE=Santiago Lionel, APELLIDO=Lorca, DOCUMENTO=30904465, NACIMIENTO=1999-03-17 y NUMERO=7574
+
+- Cliente crea el string 5|Santiago Lionel|Lorca|30904465|1999-03-17|7574.
+- Ese string se convierte en bytes (UTF-8). El mensaje tiene 52 bytes contando los separadores.
+`[00 00 00 34][35 7C 53 61 6E 74 69 61 67 6F ... 37 34]`
+`^ longitud=52   ^ contenido del mensaje (string en UTF-8)`
+
+- Servidor lee los 4 bytes iniciales y sabe que recibirá 52 bytes más.
+- Reconstruye el string `5|Santiago Lionel|Lorca|30904465|1999-03-17|7574`.
+- Lo separa con split("|").
+- Lo convierte en objeto Bet y lo almacena.
+- Server envía un OK de vuelta al cliente.
+
+- Cliente loguea el OK como `action: apuesta_enviada | result: success | dni: 30904465 | numero: 7574`.
+
+En este protocolo en particular al saber los bytes que recibiremos de antemano con el header es más facil evitar el short read o short write ya que podemos decirle al cliente o servidor cuantos bytes deben leer para tener todo el mensaje:
+
+snippet del bucle de server.py para no hacer short read:
+
+```
+while len(msg_data) < msg_length:
+        remaining = msg_length - len(msg_data)
+        chunk = sock.recv(min(remaining, MAX_MESSAGE_SIZE))
+```
+
+snippet del bucle de client.go para no hacer short write:
+
+```
+for totalSent < len(msg) {
+		n, err := c.conn.Write(msg[totalSent:])
+		if err != nil {
+			return err
+		}
+		totalSent += n
+	}
+```
+
+
+### Ejercicio N°6:
+
+En este ejercicio primero se agregó el volumen ./.data/:/data/:ro a los clientes para poder procesar los archivos CSV de apuestas. Cada cliente leerá el archivo que corresponda con su client ID. `csvFilename := fmt.Sprintf("/data/agency-%s.csv", c.config.ID)`
+
+Una vez que el cliente tiene su archivo lo cargará en memoria de a chunks de máximo 8KB para envíar como mensajes al Servidor. los batches de mensajes serán de un numero ***batch: maxAmount*** o su quivalente hasta completar ***8KB***, lo que sea menor.
+
+***Aclaración: en este TP se asume que como los mensajes unitarios de apuestas son lineas de texto, nunca superaran los 8KB por si solos***
+
+- El Cliente solo mantiene el batch actual `[]Apuesta` en memoria.
+- El Servidor esta acotado también a leer solo hasta 8KB para asegurar tamaños.
+
+- El Cliente serializa los datos de la apuesta, calcula si agregarla causaría que se pasen los 8KB del tamaño del mensaje, si no se pasa lo agrega y pasa a la siguiente linea. Repite hasta el limite o el EOF y envía el mensaje.
+
+- El Servidor luego lee el cuerpo en chunks hasta completar el mensaje.
+
+
+### Ejercicio N°7 y N°8:
+
+En este Ejercicio se optó por utilizar la tecnica de miltithreading en python, por el hecho de que sabemos que las operaciones no son I/O intensive, lo que hace que los locks que se utilizan para evitar tener multiples hilos en la sección critica no sean un factor de cuello de botella para el sistema. De la misma manera, los hilos en este caso son mas fáciles de mantener, y como sabemos que no hay una cantidad desorbitante de agencias de lotería no se cree que el overhead de los threads implique un problema para su funcionamiento.
+
+#### Cambios principales en el Cliente:
+- Prefijo en mensajes de apuestas: Ahora envía `"BET:" + datos` para distinguir los batches
+- Notificación de finalización: Método `notifyFinished()` que envía `"FINISHED"` al servidor
+- Consulta de ganadores: Método `queryWinners()` que envía `"WINNERS"` y espera respuesta
+- Log requerido: Imprime correctamente `action: consulta_ganadores | result: success | cant_ganadores: X`
+
+
+#### Cambios principales en el Servidor:
+- Threading: Maneja cada cliente en un thread separado para permitir conexiones simultáneas
+- Control del sorteo:
+
+    1. Rastrea qué agencias terminaron `agencies_finished`
+    3. Ejecuta el sorteo una sola vez
+
+
+- Sistema de espera: Los clientes que consultan antes del sorteo se agregan a `waiting_clients`
+- Distribución de resultados: Cada agencia recibe solo los DNIs de sus propios ganadores
+- Log requerido: Imprime `action: sorteo | result: success` cuando se realiza el sorteo
+
+
+***¿Cómo se logro la correcta implementacion de concurrencia en python teniendo en cuenta [las limitaciones](https://wiki.python.org/moin/GlobalInterpreterLock)?***
+
+- Se usa threading.Lock() para evitar race conditions.
+- Los clientes que consultan antes del sorteo quedan "en espera" sin bloquear el servidor.
+- Cuando llega el último FINISHED, se ejecuta el sorteo y se notifica a todos los clientes en espera.
