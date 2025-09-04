@@ -36,7 +36,7 @@ La cantidad máxima de apuestas dentro de cada _batch_ debe ser configurable des
 
 Por su parte, el servidor deberá responder con éxito solamente si todas las apuestas del _batch_ fueron procesadas correctamente.
 
-## Resolición
+## Resolución
 
 ### Ejercicio N°6:
 
