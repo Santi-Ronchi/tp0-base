@@ -26,6 +26,11 @@ with open(archivo, "w") as f:
     f.write("    networks:\n")
     f.write("      - testing_net\n")
     f.write("    restart: on-failure\n")
+    f.write("    healthcheck:\n")
+    f.write("      test: [\"CMD\", \"nc\", \"-z\", \"localhost\", \"12345\"]\n")
+    f.write("      interval: 0.5s\n")
+    f.write("      timeout: 1s\n")
+    f.write("      retries: 10\n")
 
     # Clientes
     for i in range(1, cantidad + 1):
@@ -39,7 +44,8 @@ with open(archivo, "w") as f:
         f.write("    networks:\n")
         f.write("      - testing_net\n")
         f.write("    depends_on:\n")
-        f.write("      - server\n")
+        f.write("      server:\n")
+        f.write("        condition: service_healthy\n")
         f.write("    restart: on-failure\n")
 
     # Redes
