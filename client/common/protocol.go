@@ -36,15 +36,15 @@ func SerializeApuesta(a Apuesta) []byte {
 	return []byte(msg)
 }
 
-// EstimateApuestaSize estima el tamaño en bytes de una apuesta serializada
+// EstimateApuestaSize estimates the size in bytes of a serialized bet.
 func EstimateApuestaSize(a Apuesta) int {
 	serialized := SerializeApuesta(a)
 	return len(serialized)
 }
 
-// SerializeBatch convierte un batch de apuestas al formato wire
-// Format: apuesta1;apuesta2;apuesta3...
-// ASUME: El batch ya está dimensionado para caber dentro del límite de 8KB
+// SerializeBatch converts a batch of bets to wire format
+// Format: bet1;bet2;bet3...
+// ASSUMES: The batch is already sized to fit within the 8KB limit
 func SerializeBatch(apuestas []Apuesta) []byte {
 	if len(apuestas) == 0 {
 		return []byte{}
@@ -56,7 +56,7 @@ func SerializeBatch(apuestas []Apuesta) []byte {
 		if i > 0 {
 			buffer.WriteString(BatchSeparator)
 		}
-		// Formato de cada apuesta en el batch
+		// Format of each bet in the batch
 		msg := fmt.Sprintf("%d%s%s%s%s%s%s%s%s%s%d",
 			apuesta.Agency,
 			FieldSeparator,
@@ -104,22 +104,22 @@ func DeserializeApuesta(data []byte) (*Apuesta, error) {
 	}, nil
 }
 
-// DeserializeBatch convierte el formato wire a un slice de Apuestas
+// DeserializeBatch converts the wire format to a slice of Bets
 func DeserializeBatch(data []byte) ([]*Apuesta, error) {
 	str := string(data)
 
-	// Si está vacío, retornar slice vacío
+	// If empty, return empty slice
 	if len(str) == 0 {
 		return []*Apuesta{}, nil
 	}
 
-	// Dividir por el separador de batch
+	// Split by batch separator
 	betsStr := strings.Split(str, BatchSeparator)
 	apuestas := make([]*Apuesta, 0, len(betsStr))
 
 	for _, betStr := range betsStr {
 		if betStr == "" {
-			continue // Saltar strings vacíos
+			continue
 		}
 		apuesta, err := DeserializeApuesta([]byte(betStr))
 		if err != nil {
@@ -133,7 +133,7 @@ func DeserializeBatch(data []byte) ([]*Apuesta, error) {
 
 // CreateMessage creates a length-prefixed message
 // Format: [4 bytes length][message data]
-// ASUME: Los datos ya están validados para caber en el límite
+// ASSUMES: The data has already been validated to fit within the limit.
 func CreateMessage(data []byte) ([]byte, error) {
 	var buf bytes.Buffer
 

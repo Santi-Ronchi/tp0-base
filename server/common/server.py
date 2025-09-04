@@ -36,7 +36,7 @@ class Server:
                 if client_sock:
                     self.__handle_client_connection(client_sock)
             except OSError:
-                # Socket principal cerrado
+                # Main Socket closed
                 if not self.running:
                     break
                 else:
@@ -51,7 +51,7 @@ class Server:
         client socket will also be closed
         """
         try:
-            while True:  # Mantener la conexión abierta para múltiples batches
+            while True:  # Keep the connection open for multiple batches
                 try:
                     # Read complete message using protocol module
                     msg = read_message_from_socket(client_sock)
@@ -59,7 +59,7 @@ class Server:
                     # Parse batch message using protocol module
                     bets_data = deserialize_batch(msg)
                     
-                    # Si el batch está vacío, responder OK pero no procesar
+                    # If the batch is empty, respond OK but do not process
                     if len(bets_data) == 0:
                         send_message_to_socket(client_sock, "OK")
                         logging.info(f"action: apuesta_recibida | result: success | cantidad: 0")
@@ -88,16 +88,15 @@ class Server:
                     logging.info(f"action: apuesta_recibida | result: success | cantidad: {len(bets)}")
                     
                 except ConnectionError as e:
-                    # Cliente cerró la conexión, es normal
                     logging.debug(f"Client closed connection: {e}")
                     break
                 except Exception as e:
-                    # Error procesando el batch actual
+                    # Error procesing batch
                     logging.error(f"action: apuesta_recibida | result: fail | error: {e}")
                     try:
                         # Try to send error response
                         send_message_to_socket(client_sock, "ERROR")
-                        # Log failure - intentamos extraer la cantidad si es posible
+                        # Log failure - ry to extract amuount
                         try:
                             msg_len = len(msg.split(';')) if 'msg' in locals() else 0
                             logging.error(f"action: apuesta_recibida | result: fail | cantidad: {msg_len}")
@@ -105,7 +104,7 @@ class Server:
                             logging.error(f"action: apuesta_recibida | result: fail | cantidad: unknown")
                     except:
                         pass  # Ignore errors when sending error response
-                    break  # Salir del loop en caso de error
+                    break  # Exit loop in case of errors
                     
         finally:
             client_sock.close()

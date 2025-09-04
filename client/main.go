@@ -117,10 +117,10 @@ func main() {
 
 	client := common.NewClient(clientConfig)
 
-	// Canal para señalar cuando el cliente termine su trabajo
+	// Channel to signal when the client is done with its tasks
 	done := make(chan bool)
 
-	// Manejo de SIGTERM para shutdown graceful
+	// Manage SIGTERM for a graceful shutdown
 	stopChan := make(chan os.Signal, 1)
 	signal.Notify(stopChan, syscall.SIGTERM)
 
@@ -130,7 +130,7 @@ func main() {
 		done <- true
 	}()
 
-	// Esperar a que termine el cliente O reciba SIGTERM
+	// Wait until the client ends or SIGTERM is issued
 	select {
 	case <-done:
 		log.Infof("action: exitDone | result: success | client_id: %v | reason: finished", clientConfig.ID)
