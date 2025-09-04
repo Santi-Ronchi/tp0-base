@@ -151,7 +151,7 @@ def read_message_from_socket(sock):
     while len(msg_data) < msg_length:
         remaining = msg_length - len(msg_data)
         # Optimized chunk size for better performance
-        chunk_size = min(remaining, 4096)
+        chunk_size = min(remaining, MAX_PACKET_SIZE)
         chunk = sock.recv(chunk_size)
         if not chunk:
             raise ConnectionError("Connection closed while reading message")
