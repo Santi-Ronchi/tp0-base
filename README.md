@@ -44,7 +44,7 @@ Se deberá implementar un módulo de comunicación entre el cliente y el servido
 * Correcto empleo de sockets, incluyendo manejo de errores y evitando los fenómenos conocidos como [_short read y short write_](https://cs61.seas.harvard.edu/site/2018/FileDescriptors/).
 
 
-## Resolición
+## Resolución
 
 ### Ejercicio N°5:
 
