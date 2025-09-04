@@ -55,7 +55,7 @@ El script deberá ubicarse en la raíz del proyecto. Netcat no debe ser instalad
 
 ### Ejercicio N°3:
 
-Se creó el sh `validar-echo-server.sh` para testear el eco del server con netcat y se le dio permisos de ejecución.
+Se creó el sh `validar-echo-server.sh` para testear el eco del server con netcat y se le dio permisos de ejecución. En este caso se optó por usar BusyBox ya que contiene netcat y facilita la implementación.
 
 para lanzarlo simplemente hacer `./validar-echo-server.sh` y revisar el outcome:
 
