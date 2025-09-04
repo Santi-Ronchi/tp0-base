@@ -6,6 +6,8 @@ Handles serialization/deserialization without using prohibited libraries
 # Protocol constants
 FIELD_SEPARATOR = '|'
 MESSAGE_SEPARATOR = '\n'
+MAX_MESSAGE_SIZE = 8192 
+
 
 
 def serialize_bet(agency, first_name, last_name, document, birthdate, number):
@@ -98,7 +100,7 @@ def read_message_from_socket(sock):
     msg_data = b""
     while len(msg_data) < msg_length:
         remaining = msg_length - len(msg_data)
-        chunk = sock.recv(min(remaining, 4096))
+        chunk = sock.recv(min(remaining, MAX_MESSAGE_SIZE))
         if not chunk:
             raise ConnectionError("Connection closed while reading message")
         msg_data += chunk
