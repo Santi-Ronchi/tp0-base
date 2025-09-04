@@ -111,7 +111,7 @@ func main() {
 
 	client := common.NewClient(clientConfig)
 
-	// Manejo de SIGTERM para shutdown graceful
+	// Manage SIGTERM for a graceful shutdown
 	stopChan := make(chan os.Signal, 1)
 	signal.Notify(stopChan, syscall.SIGTERM)
 	go func() {
