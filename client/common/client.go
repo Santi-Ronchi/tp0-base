@@ -47,14 +47,23 @@ func NewClient(config ClientConfig) *Client {
 // failure, error is printed in stdout/stderr and exit 1
 // is returned
 func (c *Client) createClientSocket() error {
-	conn, err := net.Dial("tcp", c.config.ServerAddress)
-	if err != nil {
-		log.Criticalf("action: connect | result: fail | client_id: %v | error: %v",
-			c.config.ID, err)
-		return err
+	var conn net.Conn
+	var err error
+	maxRetries := 5
+
+	for i := 1; i <= maxRetries; i++ {
+		conn, err = net.Dial("tcp", c.config.ServerAddress)
+		if err == nil {
+			c.conn = conn
+			return nil
+		}
+
+		time.Sleep(time.Second)
 	}
-	c.conn = conn
-	return nil
+
+	log.Criticalf("action: connect | result: fail | client_id: %v | error: %v",
+		c.config.ID, err)
+	return err
 }
 
 // StartClientLoop Send messages to the client until some time threshold is met
